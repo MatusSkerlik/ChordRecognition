@@ -26,12 +26,22 @@ also, introduces chroma variants implemented in librosa.
 # License: ISC
 # sphinx_gallery_thumbnail_number = 6
 
-from __future__ import print_function
+import operator
+import statistics
+from enum import Enum
 
 import librosa.display
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy
+
+
+def plot(ch, t, bt):
+    librosa.display.specshow(ch, y_axis='chroma', x_axis='time',
+                             x_coords=bt)
+    plt.title('Chroma (beat time)' + (' tempo: %.2f ' % t) + ' bps')
+    plt.tight_layout()
+    plt.show()
 
 
 class Chroma:
@@ -68,34 +78,100 @@ class Chroma:
 
         return self.chroma_smooth
 
-    def analyse_beat_sync(self) -> (float, float, np.array):
-        chroma_smooth = self.analyse();
+    def analyse_beat_sync(self) -> (np.array, float, np.array, np.array):
+        chroma_smooth = self.analyse()
         tempo, beat_f = librosa.beat.beat_track(y=self.y, sr=self.sr, trim=False)
         beat_f = librosa.util.fix_frames(beat_f)
         beat_t = librosa.frames_to_time(beat_f, sr=self.sr)
         chroma_smooth_sync = librosa.util.sync(chroma_smooth, beat_f, aggregate=np.median)
 
-        return beat_t, tempo, chroma_smooth_sync
+        return chroma_smooth_sync, tempo, beat_t, beat_f
 
 
-###########################################################
-# Plot 2 graphs
-# First graph is without beat synchronization
+class ChordType(Enum):
+    MAJOR = "major"
+    MINOR = "minor"
+    UNKNOWN = "unknown"
 
-chroma = Chroma("./PianoChords.wav", duration=120)
+    def __str__(self):
+        return self.value
 
-chroma_smooth = chroma.analyse()
-beat_t, tempo, chroma_smooth_sync = chroma.analyse_beat_sync()
 
-plt.figure()
+class Chord(Enum):
+    C = (0, "C")
+    Cs = (1, "C#")
+    D = (2, "D")
+    Ds = (3, "D#")
+    E = (4, "E")
+    F = (5, "F")
+    Fs = (6, "F#")
+    G = (7, "G")
+    Gs = (8, "G#")
+    A = (9, "A")
+    As = (10, "A#")
+    B = (11, "B")
+    UNKNOWN = (-1, "?")
 
-ax1 = plt.subplot(2, 1, 1)
-librosa.display.specshow(chroma_smooth, y_axis='chroma', x_axis='time')
-plt.title('Processed Chroma (linear time)')
+    def __str__(self):
+        return self.value[1]
 
-ax2 = plt.subplot(2, 1, 2, sharex=ax1)
-librosa.display.specshow(chroma_smooth_sync, y_axis='chroma', x_axis='time',
-                         x_coords=beat_t)
-plt.title('Processed Chroma (beat time)' + (' tempo: %.2f ' % tempo) + ' bps')
-plt.tight_layout()
-plt.show()
+    @classmethod
+    def index(cls, index: int):
+        for _chord in cls:
+            if _chord.value[0] == index:
+                return _chord
+        raise ValueError("%d is not a valid index for %s" % (index, cls.__name__))
+
+
+class ChordTemplate:
+
+    def __init__(self, chord_type: ChordType, shift: int) -> None:
+        super().__init__()
+        self.vector = ChordTemplate.chord(chord_type, shift)
+        self.chord_type = chord_type
+        self.chord_key = Chord.index(shift)
+
+    def __repr__(self) -> str:
+        return '%s %s' % (self.chord_key, self.chord_type)
+
+    @staticmethod
+    def chord(chord_type: ChordType, shift: int) -> np.array:
+        vector = np.zeros(12, dtype=int)
+        if chord_type is ChordType.MAJOR:
+            vector[0] = 1
+            vector[4] = 1
+            vector[7] = 1
+        elif chord_type is ChordType.MINOR:
+            vector[0] = 1
+            vector[3] = 1
+            vector[7] = 1
+
+        return np.roll(vector, shift)
+
+    def dot_product(self, vector: np.array):
+        return np.dot(self.vector, vector)
+
+
+chord_templates = tuple(ChordTemplate(chord_type, shift) for chord_type in ChordType for shift in range(0, 12))
+chroma = Chroma("./PianoChords.wav", 180)
+chroma_smooth_sync, tempo, beat_t, beat_f = chroma.analyse_beat_sync()
+
+plot(chroma_smooth_sync, tempo, beat_t)
+
+chord_progression = list()
+for chroma_vector in chroma_smooth_sync.T:
+    template_dot_map = {}
+    dot_products = list()
+    for chord_template in chord_templates:
+        dot_product = chord_template.dot_product(chroma_vector)
+        dot_products.append(dot_product)
+        template_dot_map.update({chord_template: dot_product})
+    median = statistics.median(dot_products)
+    # median is big if there is chroma vector witch is fulfilled, average is about 0.05
+    print('Mean: %f, Median: %f' % (statistics.mean(dot_products), median))
+    if median < 0.3:
+        chord_progression.append(max(template_dot_map.items(), key=operator.itemgetter(1))[0])
+    else:
+        chord_progression.append(ChordTemplate(ChordType.UNKNOWN, -1))
+
+print(chord_progression)
