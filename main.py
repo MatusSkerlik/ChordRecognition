@@ -29,6 +29,7 @@ also, introduces chroma variants implemented in librosa.
 import operator
 import statistics
 from enum import Enum
+from typing import List
 
 import librosa.display
 import matplotlib.pyplot as plt
@@ -98,19 +99,20 @@ class ChordType(Enum):
 
 
 class Chord(Enum):
-    C = (0, "C")
-    Cs = (1, "C#")
-    D = (2, "D")
-    Ds = (3, "D#")
-    E = (4, "E")
-    F = (5, "F")
-    Fs = (6, "F#")
-    G = (7, "G")
-    Gs = (8, "G#")
-    A = (9, "A")
-    As = (10, "A#")
-    B = (11, "B")
-    UNKNOWN = (-1, "?")
+    # TODO update frequencies to 4 float points
+    C = (0, "C", 16.35159883)
+    Cs = (1, "C#", 17.32391444)
+    D = (2, "D", 18.35404799)
+    Ds = (3, "D#", 19.44543648)
+    E = (4, "E", 20.60172231)
+    F = (5, "F", 21.82676446)
+    Fs = (6, "F#", 23.12465142)
+    G = (7, "G", 24.49971475)
+    Gs = (8, "G#", 25.9565436)
+    A = (9, "A", 27.50)
+    As = (10, "A#", 29.13523509)
+    B = (11, "B", 30.86770633)
+    UNKNOWN = (-1, "?", .0)
 
     def __str__(self):
         return self.value[1]
@@ -122,12 +124,49 @@ class Chord(Enum):
                 return _chord
         raise ValueError("%d is not a valid index for %s" % (index, cls.__name__))
 
+    @classmethod
+    def frequency(cls, index: int, octave: int) -> float:
+        return cls.index(index).value[2] * (2 ** octave)
+
+    @classmethod
+    def harmonics(cls, root: 'Chord', s_octave: int = 2, depth: int = 8) -> List['Chord']:
+        bf = cls.frequency(root.value[0], s_octave)
+        frequencies = list(bf * i for i in range(1, depth + 1))
+
+        all_fq = list()
+        max_frequency = max(frequencies)
+        for octave in range(s_octave, 8):
+            for note in range(0, 12):
+                frequency = cls.frequency(note, octave)
+                if frequency > max_frequency:
+                    all_fq.append(frequency)
+                    break
+                else:
+                    all_fq.append(frequency)
+            else:
+                continue  # only executed if the inner loop did NOT break
+            break  # only executed if the inner loop DID break
+
+        harms = list()
+        for frequency in frequencies:
+            fq_diff = list()
+            for fq in all_fq:
+                fq_diff.append(fq - frequency)
+            minimal = min(fq_diff, key=abs)
+            min_index = fq_diff.index(minimal)
+            harms.append(cls.index(min_index % 12))
+
+        return harms
+
 
 class ChordTemplate:
 
     def __init__(self, chord_type: ChordType, shift: int) -> None:
         super().__init__()
-        self.vector = ChordTemplate.chord(chord_type, shift)
+        if chord_type is ChordType.UNKNOWN:
+            self.vector = np.zeros(12, dtype=float)
+        else:
+            self.vector = ChordTemplate.chord_triad(chord_type, shift)
         self.chord_type = chord_type
         self.chord_key = Chord.index(shift)
 
@@ -135,25 +174,42 @@ class ChordTemplate:
         return '%s %s' % (self.chord_key, self.chord_type)
 
     @staticmethod
-    def chord(chord_type: ChordType, shift: int) -> np.array:
-        vector = np.zeros(12, dtype=int)
-        if chord_type is ChordType.MAJOR:
-            vector[0] = 1
-            vector[4] = 1
-            vector[7] = 1
-        elif chord_type is ChordType.MINOR:
-            vector[0] = 1
-            vector[3] = 1
-            vector[7] = 1
+    def chord(chord_type: ChordType, shift: int, alpha: float = 0.25, depth: int = 12) -> np.array:
+        vector = np.zeros(12, dtype=float)
+        harmonics = Chord.harmonics(Chord.index(shift), depth=depth)
+
+        vector[0] = 1 + sum(alpha ** i for i in range(1, depth) if harmonics[i] is Chord.index(shift))
+        if chord_type is ChordType.MINOR:
+            vector[3] = sum(alpha ** i for i in range(1, depth) if harmonics[i] is Chord.index((shift + 3) % 12))
+        elif chord_type is ChordType.MAJOR:
+            vector[4] = sum(alpha ** i for i in range(1, depth) if harmonics[i] is Chord.index((shift + 4) % 12))
+        else:
+            raise TypeError
+        vector[7] = sum(alpha ** i for i in range(1, depth) if harmonics[i] is Chord.index((shift + 7) % 12))
+        # vector[10] = sum(alpha ** i for i in range(depth) if harmonics[i] is Chord.index((shift + 10) % 12))
 
         return np.roll(vector, shift)
+
+    @staticmethod
+    def chord_triad(chord_type: ChordType, shift: int, alpha: float = 0.25, depth: int = 12):
+        if chord_type is ChordType.MINOR:
+            return np.sum((ChordTemplate.chord(chord_type, shift, alpha, depth),
+                           ChordTemplate.chord(chord_type, (shift + 3) % 12, alpha, depth),
+                           ChordTemplate.chord(chord_type, (shift + 7) % 12, alpha, depth)), axis=0)
+        elif chord_type is ChordType.MAJOR:
+            return np.sum((ChordTemplate.chord(chord_type, shift, alpha, depth),
+                           ChordTemplate.chord(chord_type, (shift + 4) % 12, alpha, depth),
+                           ChordTemplate.chord(chord_type, (shift + 7) % 12, alpha, depth)), axis=0)
+        else:
+            raise TypeError
 
     def dot_product(self, vector: np.array):
         return np.dot(self.vector, vector)
 
 
-chord_templates = tuple(ChordTemplate(chord_type, shift) for chord_type in ChordType for shift in range(0, 12))
-chroma = Chroma("./PianoChords.wav", 180)
+chord_templates = tuple(ChordTemplate(chord_type, shift) for chord_type in ChordType for shift in range(0, 12) if
+                        chord_type is not ChordType.UNKNOWN)
+chroma = Chroma("./PianoChords.wav", 30)
 chroma_smooth_sync, tempo, beat_t, beat_f = chroma.analyse_beat_sync()
 
 plot(chroma_smooth_sync, tempo, beat_t)
@@ -168,8 +224,9 @@ for chroma_vector in chroma_smooth_sync.T:
         template_dot_map.update({chord_template: dot_product})
     median = statistics.median(dot_products)
     # median is big if there is chroma vector witch is fulfilled, average is about 0.05
+    print(template_dot_map)
     print('Mean: %f, Median: %f' % (statistics.mean(dot_products), median))
-    if median < 0.3:
+    if median < 5:
         chord_progression.append(max(template_dot_map.items(), key=operator.itemgetter(1))[0])
     else:
         chord_progression.append(ChordTemplate(ChordType.UNKNOWN, -1))
