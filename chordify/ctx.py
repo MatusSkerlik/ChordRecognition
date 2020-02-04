@@ -17,10 +17,42 @@
 #  OTHER DEALINGS IN THE SOFTWARE.
 #
 
-from chordify.app import Chordify, NoneBeatStrategy
+#
+#  Permission is hereby granted, free of charge, to any person obtaining a copy of this
+#  software and associated documentation files (the "Software"), to deal in the Software
+#  without restriction, including without limitation the rights to use, copy, modify, merge,
+#  publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+#  to whom the Software is furnished to do so, subject to the following conditions:
+#
+#
+#
 
-chordify = Chordify({
-    "AP_BEAT_STRATEGY_FACTORY": NoneBeatStrategy
-})
-chords = chordify.chords_from("./ReferenceAnnotations/Beatles/Let_It_Be/song.m4a")
-print(chords)
+from chordify.config import Config
+
+
+class CtxAttribute(object):
+    """Makes an attribute forward to the context dictionary"""
+
+    def __init__(self, name):
+        self.__name__ = name
+
+    def __get__(self, obj, type=None):
+        if obj is None:
+            return self
+        rv = obj.dictionary[self.__name__]
+        return rv
+
+    def __set__(self, obj, value):
+        obj.config[self.__name__] = value
+
+
+class Context(object):
+    _config: Config = {}
+
+    def __init__(self, config) -> None:
+        self._config = config
+        super().__init__()
+
+    @property
+    def config(self):
+        return self._config
