@@ -26,15 +26,8 @@
 #
 #
 #
+from abc import ABCMeta
 
 
-class IllegalArgumentError(ValueError):
-    pass
-
-
-class IllegalStateError(ValueError):
-    pass
-
-
-class AnnotationParsingError(ValueError):
+class Strategy(metaclass=ABCMeta):
     pass

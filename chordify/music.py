@@ -17,6 +17,13 @@
 #  OTHER DEALINGS IN THE SOFTWARE.
 #
 
+from abc import abstractmethod, ABCMeta
+from collections import deque
+from enum import Enum
+from itertools import cycle
+from math import log
+from typing import Tuple, List, Iterable, Collection, Sized
+
 #
 #  Permission is hereby granted, free of charge, to any person obtaining a copy of this
 #  software and associated documentation files (the "Software"), to deal in the Software
@@ -26,11 +33,57 @@
 #
 #
 #
-
-from enum import Enum
-from typing import List
-
 import numpy as np
+
+from chordify.exceptions import IllegalStateError, IllegalArgumentError
+
+
+def _rotate_right(vector: 'Vector', r: int) -> 'Vector':
+    _vector = deque(vector)
+    _vector.rotate(r)
+    return Vector(_vector)
+
+
+def _frequency(pitch: int) -> float:
+    if pitch < 0:
+        raise IllegalArgumentError
+    if pitch > 127:
+        raise IllegalArgumentError
+    return pow(2, (pitch - 69) / 12) * 440
+
+
+def _harmonics(start: 'ChordKey', length=19) -> Tuple['ChordKey']:
+    fq = list(reversed(tuple(i * start.frequency() for i in range(1, length + 1))))
+
+    chk_seq: List['ChordKey'] = list()
+
+    while len(fq) > 0:
+        subject = fq.pop()
+
+        before: ChordKey = start
+        for i, k in zip(range(12 * (int(log(length, 2)) + 1)), cycle(ChordKey.__iter__())):
+            if _frequency(i) < subject:
+                before = k
+            else:
+                d_bs = subject - _frequency(i - 1 if i - 1 >= 0 else 0)
+                d_cs = _frequency(i) - subject
+
+                if d_bs < d_cs:
+                    chk_seq.append(before)
+                else:
+                    chk_seq.append(k)
+                break
+
+    return tuple(chk_seq)
+
+
+def _harm_to_vector(harms: Collection) -> 'Vector':
+    _vector = ZeroVector()
+
+    for key in harms:
+        _vector[key.pos()] += 1
+
+    return _vector + ZeroVector()
 
 
 class ChordType(Enum):
@@ -38,138 +91,168 @@ class ChordType(Enum):
     MINOR = ":min"
     AUGMENTED = ":aug"
     DIMINISHED = ":dim"
-    UNKNOWN = "unknown"
-
-    def __str__(self):
-        return self.value
 
 
 class ChordKey(Enum):
-    C = (0, "C", 16.35159883)
-    Cs = (1, "C#", 17.32391444)
-    D = (2, "D", 18.35404799)
-    Ds = (3, "D#", 19.44543648)
-    E = (4, "E", 20.60172231)
-    F = (5, "F", 21.82676446)
-    Fs = (6, "F#", 23.12465142)
-    G = (7, "G", 24.49971475)
-    Gs = (8, "G#", 25.9565436)
-    A = (9, "A", 27.50)
-    As = (10, "A#", 29.13523509)
-    B = (11, "B", 30.86770633)
-    UNKNOWN = (-1, "N", .0)
+    C = "C"
+    Cs = "C#"
+    D = "D"
+    Ds = "D#"
+    E = "E"
+    F = "F"
+    Fs = "F#"
+    G = "G"
+    Gs = "G#"
+    A = "A"
+    As = "A#"
+    B = "B"
 
-    def __str__(self):
-        return self.value[1]
+    def frequency(self):
+        for i, k in enumerate(self.__class__.__iter__()):
+            if k == self:
+                return _frequency(i)
+        raise IllegalStateError
 
-    @classmethod
-    def index(cls, index):
-        for enum in ChordKey:
-            if enum.value[0] == index:
-                return enum
-        raise ValueError
-
-    @classmethod
-    def frequency(cls, index: int, octave: int) -> float:
-        return cls.index(index).value[2] * (2 ** octave)
-
-    @classmethod
-    def harmonics(cls, root: 'ChordKey', s_octave: int = 2, depth: int = 8) -> List['ChordKey']:
-        bf = cls.frequency(root.value[0], s_octave)
-        frequencies = list(bf * i for i in range(1, depth + 1))
-
-        all_fq = list()
-        max_frequency = max(frequencies)
-        for octave in range(s_octave, 8):
-            for note in range(0, 12):
-                frequency = cls.frequency(note, octave)
-                if frequency > max_frequency:
-                    all_fq.append(frequency)
-                    break
-                else:
-                    all_fq.append(frequency)
-            else:
-                continue  # only executed if the inner loop did NOT break
-            break  # only executed if the inner loop DID break
-
-        harms = list()
-        for frequency in frequencies:
-            fq_diff = list()
-            for fq in all_fq:
-                fq_diff.append(fq - frequency)
-            minimal = min(fq_diff, key=abs)
-            min_index = fq_diff.index(minimal)
-            harms.append(cls.index(min_index % 12))
-
-        return harms
+    def pos(self):
+        for i, k in enumerate(self.__class__.__iter__()):
+            if k == self:
+                return i
+        raise IllegalStateError
 
 
-class Chord:
+class Vector(Sized, Iterable):
+    _vector: tuple = None
 
-    def __init__(self, chord_type: ChordType, shift: int, alpha: float = 0.5, depth: int = 8) -> None:
+    def __init__(self, vector: Collection) -> None:
         super().__init__()
-        self.chord_type = chord_type
-        self.chord_key = ChordKey.index(shift)
-        self.shift = shift
-        self.depth = depth
-        self.alpha = alpha
 
-        if chord_type is ChordType.UNKNOWN:
-            self.vector = np.zeros(12, dtype=float)
+        if len(vector) != 12:
+            raise IllegalArgumentError
+
+        self._vector = tuple(vector)
+
+    def __iter__(self):
+        return iter(self._vector)
+
+    def __len__(self):
+        return 12
+
+    def __getitem__(self, item):
+        return self._vector[item]
+
+    def __sub__(self, other):
+        if isinstance(other, Vector):
+            _r = tuple(a - b for a, b in zip(self._vector, other._vector))
+            m = max(_r)
+            return Vector(tuple(a / m for a in _r))
+        raise NotImplementedError
+
+    def __add__(self, other):
+        if isinstance(other, Vector):
+            _r = tuple(a + b for a, b in zip(self._vector, other._vector))
+            m = max(_r)
+            return Vector(tuple(a / m for a in _r))
+        raise NotImplementedError
+
+    def __mul__(self, other):
+        if isinstance(other, Vector):
+            return sum(a * b for a, b in zip(self._vector, other._vector))
+        raise NotImplementedError
+
+    def __repr__(self):
+        return '(' + ', '.join(map(str, self._vector)) + ')'
+
+
+class MutableVector(Vector):
+
+    def __setitem__(self, key, value):
+        if 0 <= key < 12:
+            _vector = list(self._vector)
+            _vector[key] = value
+            self._vector = tuple(_vector)
         else:
-            self.vector = self.triad_energy()
+            raise IllegalArgumentError
+
+
+class ZeroVector(MutableVector):
+
+    def __init__(self) -> None:
+        super().__init__(tuple(0.0 for i in range(12)))
+
+
+class Chord(object, metaclass=ABCMeta):
+    _chord_type: ChordType = None
+    _chord_key: ChordKey = None
+
+    def __init__(self, chord_key: ChordKey, chord_type: ChordType):
+        super().__init__()
+
+        self._chord_type = chord_type
+        self._chord_key = chord_key
 
     def __repr__(self) -> str:
-        return '%s%s' % (self.chord_key, self.chord_type)
+        return '%s%s' % (self._chord_key.value, self._chord_type.value)
 
-    @staticmethod
-    def energy(chord_type: ChordType, shift: int, alpha: float = 0.5, depth: int = 8) -> np.array:
-        vector = np.zeros(12, dtype=float)
-        harmonics = ChordKey.harmonics(ChordKey.index(shift), depth=depth)
+    @property
+    def key(self):
+        return self._chord_key
 
-        vector[0] = 1 + sum(alpha ** i for i in range(1, depth) if harmonics[i] is ChordKey.index(shift))
-        if chord_type is ChordType.MINOR or chord_type is ChordType.DIMINISHED:
-            vector[3] = sum(alpha ** i for i in range(1, depth) if harmonics[i] is ChordKey.index((shift + 3) % 12))
-        elif chord_type is ChordType.MAJOR or chord_type is ChordType.AUGMENTED:
-            vector[4] = sum(alpha ** i for i in range(1, depth) if harmonics[i] is ChordKey.index((shift + 4) % 12))
+    @property
+    def type(self):
+        return self._chord_type
 
-        if chord_type is ChordType.MINOR or chord_type is ChordType.MAJOR:
-            vector[7] = sum(alpha ** i for i in range(1, depth) if harmonics[i] is ChordKey.index((shift + 7) % 12))
-        elif chord_type is ChordType.DIMINISHED:
-            vector[6] = sum(alpha ** i for i in range(1, depth) if harmonics[i] is ChordKey.index((shift + 6) % 12))
-        elif chord_type is ChordType.AUGMENTED:
-            vector[8] = sum(alpha ** i for i in range(1, depth) if harmonics[i] is ChordKey.index((shift + 8) % 12))
+    @property
+    @abstractmethod
+    def vector(self) -> Vector:
+        pass
 
-        vector[10] = sum(alpha ** i for i in range(depth) if harmonics[i] is ChordKey.index((shift + 10) % 12))
-        vector[11] = sum(alpha ** i for i in range(depth) if harmonics[i] is ChordKey.index((shift + 11) % 12))
 
-        return np.roll(vector, shift)
+class TemplateChord(Chord):
+    _MAJOR: Vector = (1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0)
+    _MINOR: Vector = (1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0)
+    _DIMINISHED: Vector = (1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0)
+    _AUGMENTED: Vector = (1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
 
-    def triad_energy(self):
+    def shift(self):
+        for i, key in enumerate(ChordKey.__iter__()):
+            if key == self._chord_key:
+                return i
+        raise IllegalStateError
 
-        chord_type = self.chord_type
-        shift = self.shift
-        alpha = self.alpha
-        depth = self.depth
+    @property
+    def vector(self) -> Vector:
 
-        if chord_type is ChordType.MINOR:
-            return np.sum((Chord.energy(chord_type, shift, alpha, depth),
-                           Chord.energy(chord_type, (shift + 3) % 12, alpha, depth),
-                           Chord.energy(chord_type, (shift + 7) % 12, alpha, depth)), axis=0)
-        elif chord_type is ChordType.MAJOR:
-            return np.sum((Chord.energy(chord_type, shift, alpha, depth),
-                           Chord.energy(chord_type, (shift + 4) % 12, alpha, depth),
-                           Chord.energy(chord_type, (shift + 7) % 12, alpha, depth)), axis=0)
-        elif chord_type is ChordType.AUGMENTED:
-            return np.sum((Chord.energy(chord_type, shift, alpha, depth),
-                           Chord.energy(chord_type, (shift + 4) % 12, alpha, depth),
-                           Chord.energy(chord_type, (shift + 8) % 12, alpha, depth)), axis=0)
-        elif chord_type is ChordType.DIMINISHED:
-            return np.sum((Chord.energy(chord_type, shift, alpha, depth),
-                           Chord.energy(chord_type, (shift + 3) % 12, alpha, depth),
-                           Chord.energy(chord_type, (shift + 6) % 12, alpha, depth)), axis=0)
-        else:
-            raise TypeError
+        _shift = self.shift()
 
-    def dot_product(self, vector: np.array):
-        return np.dot(self.vector, vector)
+        if self.type == ChordType.MAJOR:
+            return _rotate_right(self._MAJOR, _shift)
+        if self.type == ChordType.MINOR:
+            return _rotate_right(self._MINOR, _shift)
+        if self.type == ChordType.DIMINISHED:
+            return _rotate_right(self._DIMINISHED, _shift)
+        if self.type == ChordType.AUGMENTED:
+            return _rotate_right(self._AUGMENTED, _shift)
+        raise IllegalStateError
+
+
+class TemplateChordList(object):
+    MAJOR = tuple(TemplateChord(chord_key, ChordType.MAJOR) for chord_key in ChordKey)
+    MINOR = tuple(TemplateChord(chord_key, ChordType.MINOR) for chord_key in ChordKey)
+    AUGMENTED = tuple(TemplateChord(chord_key, ChordType.AUGMENTED) for chord_key in ChordKey)
+    DIMINISHED = tuple(TemplateChord(chord_key, ChordType.DIMINISHED) for chord_key in ChordKey)
+    ALL = tuple(np.array([MAJOR, MINOR, AUGMENTED, DIMINISHED]).flatten())
+
+
+class HarmonicChord(TemplateChord):
+
+    @property
+    def vector(self) -> Vector:
+        return super().vector + _harm_to_vector(_harmonics(self.key))
+
+
+class HarmonicChordList(object):
+    MAJOR = tuple(HarmonicChord(chord_key, ChordType.MAJOR) for chord_key in ChordKey)
+    MINOR = tuple(HarmonicChord(chord_key, ChordType.MINOR) for chord_key in ChordKey)
+    AUGMENTED = tuple(HarmonicChord(chord_key, ChordType.AUGMENTED) for chord_key in ChordKey)
+    DIMINISHED = tuple(HarmonicChord(chord_key, ChordType.DIMINISHED) for chord_key in ChordKey)
+    ALL = tuple(np.array([MAJOR, MINOR, AUGMENTED, DIMINISHED]).flatten())

@@ -27,75 +27,107 @@
 #
 #
 
-from copy import deepcopy
-from typing import List
+from types import FunctionType
+from typing import Iterable
 
 import librosa.display
 import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.axes import Axes
 
-from .app import ChordKey, ChordType
-
-
-def c2n(to: int) -> int:
-    n = 2
-    while to > n:
-        n *= 2
-    return n
+from chordify.annotation import ChordTimeline
+from chordify.music import TemplateChordList
 
 
-def plot_chroma(chroma, tempo, beat_time):
-    plt.figure(0)
-    librosa.display.specshow(chroma, y_axis='chroma', x_axis='time',
-                             x_coords=beat_time)
-    plt.title('Chroma (beat time)' + (' tempo: %.2f ' % tempo) + ' bps')
-    plt.tight_layout()
-    plt.show()
+class ChartBuilder(object):
+    _n_cols: int = 1
+    _n_rows: int = 0
+    _auto = False
+    _n_func = list()
+    _default_width = 6
+    _default_height = 8
 
+    def __init__(self, n_rows: int = None, n_cols: int = None, width: int = None, height: int = None) -> None:
 
-def all_chords_str() -> List[str]:
-    all_chords = list()
-    all_chords.append("N")
-    all_chords.extend(
-        ('%s%s' % (chord_key.__str__(), chord_type.__str__())) for chord_type in ChordType for chord_key in
-        ChordKey if chord_type is not ChordType.UNKNOWN if chord_key is not ChordKey.UNKNOWN
-    )
-    return all_chords
+        self.height = height or self._default_width
+        self.width = width or self._default_width
 
+        if n_rows is not None and n_cols is not None and n_rows > 0 and n_cols > 0:
+            self._n_rows = n_rows
+            self._n_cols = n_cols
+        else:
+            self._auto = True
 
-def normalize_chord_str(chord_str: str):
-    normalized = deepcopy(chord_str)[:5]
+    def _add(self, func):
+        assert isinstance(func, FunctionType)
+        if self._auto:
+            self.height += 2
+            self._n_rows += 1
+        self._n_func.append(func)
 
-    if normalized.find("maj") > -1:
-        normalized = normalized[:1]
+    def chromagram(self, chroma: np.ndarray, beat_time: np.ndarray):
+        def plot(ax: Axes):
+            ax.set_title("Chromagram")
+            librosa.display.specshow(chroma,
+                                     y_axis='chroma',
+                                     x_axis='time',
+                                     x_coords=beat_time,
+                                     ax=ax)
 
-    return normalized
+        self._add(plot)
+        return self
 
+    def prediction(self, predicted: ChordTimeline, annotation: ChordTimeline):
+        _ch_str = ["N"]
+        _ch_str.extend(list(map(lambda t: str(t), reversed(TemplateChordList.ALL))))
 
-def index_chord_str(chord_str: str, normalize=False):
-    normalized = chord_str
-    if normalize:
-        normalized = normalize_chord_str(chord_str)
+        def index(chord: str):
+            return _ch_str.index(chord)
 
-    chord_map = {'N': 0}
-    for chord_str in all_chords_str():
-        chord_map[chord_str] = len(chord_map)
+        def plot(ax: Axes):
+            x_p = list(np.array(list((start, stop) for start, stop, chord in predicted)).flatten())
+            y_p = list(np.array(list((index(chord), index(chord)) for start, stop, chord in predicted)).flatten())
+            x_o = list(np.array(list((start, stop) for start, stop, chord in annotation)).flatten())
+            y_o = list(np.array(list((index(chord), index(chord)) for start, stop, chord in annotation)).flatten())
 
-    return chord_map.get(normalized) or 0
+            ax.set_yticklabels(_ch_str)
+            ax.set_yticks(range(0, len(TemplateChordList.ALL)))
+            ax.set_ylabel('Chords')
+            ax.set_xlim(0, annotation.duration())
+            ax.set_xlabel('Time (s)')
 
+            ax.xaxis.set_major_locator(plt.LinearLocator())
 
-def plot_prediction(original: List, predicted: List):
-    x_p = list(chord_time[0] for chord_time in predicted for i in range(2))[1:]
-    y_p = list(index_chord_str(chord_time[2]) for chord_time in predicted for i in range(2))[:-1]
-    x_o = list(chord_time[0] for chord_time in original for i in range(2))[1:]
-    y_o = list(index_chord_str(chord_time[2], normalize=True) for chord_time in original for i in range(2))[:-1]
-    plt.figure(1, figsize=(30, 15))
-    plt.plot(x_o, y_o, 'g--')
-    plt.plot(x_p, y_p, 'r-')
-    plt.ylabel('Chords')
-    plt.xlabel('Time (s)')
-    plt.xlim(0, original[len(original) - 1][1])
-    plt.yticks(range(0, (4 * 12) + 1), all_chords_str())
-    # plt.xticks(x_o, list(str(datetime.timedelta(seconds=chord_time[0]))[2:7] for chord_time in original for i in
-    # range(2))[1:])
-    plt.axes().xaxis.set_major_locator(plt.LinearLocator())
-    plt.show()
+            ax.bar(x_p, y_p, color="darkgrey")
+            ax.plot(x_o, y_o, 'r-')
+
+            ax.set_title("Chord Prediction")
+
+        self._add(plot)
+        return self
+
+    def show(self):
+        fig, axes = plt.subplots(nrows=self._n_rows, ncols=self._n_cols)
+        fig.set_size_inches(w=self.width, h=self.height)
+        self._n_func.reverse()
+
+        if not isinstance(axes, Iterable):
+            _axes = list()
+            _axes.append(axes)
+            axes = _axes
+
+        if self._auto:
+
+            for ax in axes:
+                self._n_func.pop()(ax)
+
+        else:
+            n_rows = 0
+            n_cols = 0
+
+            while n_rows < self._n_rows:
+                while n_cols < self._n_cols:
+                    self._n_func.pop()(axes[n_rows, n_cols])
+                    n_cols += 1
+                n_rows += 1
+        fig.show()

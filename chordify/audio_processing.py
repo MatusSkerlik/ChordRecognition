@@ -34,26 +34,9 @@ import librosa
 import numpy as np
 import scipy.ndimage
 
+from chordify.strategy import Strategy
 from .ctx import Context
-from .exceptions import IllegalStateError, IllegalArgumentError
-
-
-class Strategy(object):
-    _context: Context = None
-
-    def __init__(self, context: Context):
-        super().__init__()
-        self.context = context
-
-    @property
-    def context(self):
-        if self._context is None:
-            raise IllegalStateError
-        return self._context
-
-    @context.setter
-    def context(self, value: Context):
-        self._context = value
+from .exceptions import IllegalArgumentError
 
 
 class LoadStrategy(Strategy, metaclass=ABCMeta):
@@ -64,7 +47,6 @@ class LoadStrategy(Strategy, metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    @lru_cache
     def run(self, absolute_path) -> np.ndarray:
         pass
 
@@ -109,36 +91,75 @@ class URILoadStrategy(LoadStrategy):
 
     @staticmethod
     def factory(context) -> LoadStrategy:
-        return URILoadStrategy(context)
+        return URILoadStrategy(context.config["SAMPLING_FREQUENCY"])
 
+    def __init__(self, sampling_frequency: int):
+        super().__init__()
+
+        self._sr = sampling_frequency
+
+    @lru_cache(maxsize=None)
     def run(self, absolute_path) -> np.ndarray:
-        y, sr = librosa.load(absolute_path, self.context.config["SAMPLING_FREQUENCY"])
-        return y
+        y, sr = librosa.load(absolute_path, self._sr)
+        y_harm = librosa.effects.harmonic(y=y, margin=8)
+        return y_harm
 
 
 class CQTStrategy(STFTStrategy):
 
     @staticmethod
     def factory(context: Context) -> 'STFTStrategy':
-        return CQTStrategy(context)
+        return CQTStrategy(context.config["SAMPLING_FREQUENCY"],
+                           context.config["HOP_LENGTH"],
+                           context.config["MIN_FREQ"],
+                           context.config["N_BINS"],
+                           context.config["BINS_PER_OCTAVE"])
+
+    def __init__(self, sampling_frequency: int, hop_length: int, min_freq: int, n_bins: int,
+                 bins_per_octave: int) -> None:
+        super().__init__()
+
+        self.bins_per_octave = bins_per_octave
+        self._n_bins = n_bins
+        self._min_freq = min_freq
+        self._hop_length = hop_length
+        self._sr = sampling_frequency
 
     def run(self, y: np.ndarray) -> np.ndarray:
-        return np.abs(librosa.cqt(y, sr=self.context.config["SAMPLING_FREQUENCY"]))
+        return np.abs(librosa.cqt(y,
+                                  sr=self._sr,
+                                  hop_length=self._hop_length,
+                                  fmin=self._min_freq,
+                                  bins_per_octave=self.bins_per_octave,
+                                  n_bins=self._n_bins)
+                      )
 
 
 class FilteringChromaStrategy(ChromaStrategy):
 
     @staticmethod
     def factory(context: Context) -> 'ChromaStrategy':
-        return FilteringChromaStrategy(context)
+        return FilteringChromaStrategy(
+            context.config["HOP_LENGTH"],
+            context.config["MIN_FREQ"],
+            context.config["BINS_PER_OCTAVE"],
+            context.config["N_OCTAVES"]
+        )
+
+    def __init__(self, hop_length: int, min_freq: int, bins_per_octave: int, n_octaves: int) -> None:
+        super().__init__()
+        self._hop_length = hop_length
+        self._min_freq = min_freq
+        self._bins_per_octave = bins_per_octave
+        self._n_octaves = n_octaves
 
     def run(self, c: np.ndarray) -> np.ndarray:
         chroma = librosa.feature.chroma_cqt(
             C=c,
-            hop_length=self.context.config["HOP_LENGTH"],
-            fmin=self.context.config["MIN_FREQ"],
-            bins_per_octave=self.context.config["BINS_PER_OCTAVE"],
-            n_octaves=self.context.config["N_OCTAVES"]
+            hop_length=self._hop_length,
+            fmin=self._min_freq,
+            bins_per_octave=self._bins_per_octave,
+            n_octaves=self._n_octaves
         )
 
         chroma = np.minimum(chroma,
@@ -152,26 +173,44 @@ class SyncBeatStrategy(BeatStrategy):
 
     @staticmethod
     def factory(context: Context) -> 'BeatStrategy':
-        return SyncBeatStrategy(context)
+        return SyncBeatStrategy(context.config["SAMPLING_FREQUENCY"],
+                                context.config["HOP_LENGTH"])
+
+    def __init__(self, sampling_frequency: int, hop_length: int) -> None:
+        super().__init__()
+
+        self._hop_length = hop_length
+        self._sr = sampling_frequency
 
     def run(self, y: np.ndarray, chroma: np.ndarray) -> (np.ndarray, Any):
-        tempo, beat_f = librosa.beat.beat_track(y=y, sr=self.context.config["SAMPLING_FREQUENCY"])
+        tempo, beat_f = librosa.beat.beat_track(y=y, sr=self._sr, hop_length=self._hop_length, trim=False)
         beat_f = librosa.util.fix_frames(beat_f)
+        frames = librosa.util.sync(chroma, beat_f, aggregate=np.median)
 
-        return librosa.util.sync(chroma, beat_f, aggregate=np.median), beat_f
+        beat_t = librosa.frames_to_time(beat_f, sr=self._sr, hop_length=self._hop_length)
+        return frames, beat_t
 
 
-class NoneBeatStrategy(BeatStrategy):
+class NoBeatStrategy(BeatStrategy):
 
     @staticmethod
     def factory(context: Context) -> 'BeatStrategy':
-        return NoneBeatStrategy(context)
+        return NoBeatStrategy()
 
     def run(self, y: np.ndarray, chroma: np.ndarray) -> (np.ndarray, Any):
         return y, None
 
 
 class AudioProcessing(object):
+
+    @staticmethod
+    def factory(ctx: Context):
+        return AudioProcessing(
+            ctx.config["AP_LOAD_STRATEGY_FACTORY"](ctx),
+            ctx.config["AP_STFT_STRATEGY_FACTORY"](ctx),
+            ctx.config["AP_CHROMA_STRATEGY_FACTORY"](ctx),
+            ctx.config["AP_BEAT_STRATEGY_FACTORY"](ctx)
+        )
 
     def __init__(self, load_strategy: LoadStrategy, stft_strategy: STFTStrategy, chroma_strategy: ChromaStrategy,
                  beat_strategy: BeatStrategy) -> None:
@@ -196,39 +235,3 @@ class AudioProcessing(object):
         c = self.stft_strategy.run(y)
         chroma = self.chroma_strategy.run(c)
         return self.beat_strategy.run(y, chroma)
-
-
-class AudioProcessingBuilder(object):
-    _context: Context = None
-    _load_strategy: LoadStrategy = None
-    _stft_strategy: STFTStrategy = None
-    _chroma_strategy: ChromaStrategy = None
-    _beat_strategy: BeatStrategy = None
-
-    def __init__(self, context: Context) -> None:
-        super().__init__()
-        self._context = context
-
-    def define_load_strategy(self, load_strategy_factory: LoadStrategy.factory):
-        if load_strategy_factory is not None:
-            self._load_strategy = load_strategy_factory(self._context)
-
-    def define_stft_strategy(self, stft_strategy_factory: STFTStrategy.factory):
-        if stft_strategy_factory is not None:
-            self._stft_strategy = stft_strategy_factory(self._context)
-
-    def define_chroma_strategy(self, chroma_strategy_factory: LoadStrategy.factory):
-        if chroma_strategy_factory is not None:
-            self._chroma_strategy = chroma_strategy_factory(self._context)
-
-    def define_beat_strategy(self, beat_strategy_factory: STFTStrategy.factory):
-        if beat_strategy_factory is not None:
-            self._beat_strategy = beat_strategy_factory(self._context)
-
-    def build(self) -> AudioProcessing:
-        return AudioProcessing(
-            self._load_strategy or self._context.config["AP_LOAD_STRATEGY_FACTORY"](self._context),
-            self._stft_strategy or self._context.config["AP_STFT_STRATEGY_FACTORY"](self._context),
-            self._chroma_strategy or self._context.config["AP_CHROMA_STRATEGY_FACTORY"](self._context),
-            self._beat_strategy or self._context.config["AP_BEAT_STRATEGY_FACTORY"](self._context)
-        )
