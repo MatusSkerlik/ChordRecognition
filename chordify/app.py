@@ -26,27 +26,23 @@
 #
 #
 #
-from chordify.display import ChartBuilder
+from typing import Iterator, Union
+
 from .annotation import parse_annotation, make_timeline
 from .audio_processing import *
 from .chord_recognition import *
-from .config import ConfigAttribute, Config
-from .ctx import Context
+from .config import ConfigAttribute, Config, ImmutableDict
+from .ctx import Context, _ctx_stack, ContextAttribute, State
+from .display import Plotter
+from .learn import SupervisedVectors, SVCLearn
+from .music import Vector
 
 
-class Chordify(Context):
-    debug = ConfigAttribute("DEBUG")
-    charts = ConfigAttribute("CHARTS")
-    charts_rows = ConfigAttribute("CHARTS_ROWS")
-    charts_cols = ConfigAttribute("CHARTS_COLS")
-    charts_width = ConfigAttribute("CHARTS_WIDTH")
-    charts_height = ConfigAttribute("CHARTS_HEIGHT")
-    chart_chromagram = ConfigAttribute("CHART_CHROMAGRAM")
-    chart_prediction = ConfigAttribute("CHART_PREDICTION")
-
-    default_config: Config = {
+class Chordify(object):
+    default_config: Config = ImmutableDict({
         "DEBUG": False,
 
+        "PLOT_CLASS": Plotter,
         "CHARTS": True,
         "CHARTS_HEIGHT": None,
         "CHARTS_WIDTH": 6,
@@ -55,66 +51,87 @@ class Chordify(Context):
         "CHART_CHROMAGRAM": True,
         "CHART_PREDICTION": True,
 
-        "AP_FACTORY": AudioProcessing.factory,
-        "AP_LOAD_STRATEGY_FACTORY": URILoadStrategy.factory,
-        "AP_STFT_STRATEGY_FACTORY": CQTStrategy.factory,
-        "AP_CHROMA_STRATEGY_FACTORY": FilteringChromaStrategy.factory,
-        "AP_BEAT_STRATEGY_FACTORY": SyncBeatStrategy.factory,
+        "AUDIO_PROCESSING_CLASS": AudioProcessing,
+        "AP_LOAD_STRATEGY_CLASS": PathLoadStrategy,
+        "AP_STFT_STRATEGY_CLASS": CQTStrategy,
+        "AP_CHROMA_STRATEGY_CLASS": FilteringChromaStrategy,
+        "AP_BEAT_STRATEGY_CLASS": SyncBeatStrategy,
 
         "SAMPLING_FREQUENCY": 44100,
         "N_OCTAVES": 84 // 12,
         "N_BINS": 84,
         "BINS_PER_OCTAVE": 12 * 3,
-        "MIN_FREQ": 110,
+        "MIN_FREQ": 440,
         "HOP_LENGTH": 4096,
 
-        "PREDICT_STRATEGY_FACTORY": TemplatePredictStrategy.factory,
-        "PREDICT_STRATEGY_ALPHA": 0.5,
-        "PREDICT_STRATEGY_DEPTH": 8,
-        "PREDICT_STRATEGY_BOTTOM_THRESHOLD": 0,
-        "PREDICT_STRATEGY_UPPER_THRESHOLD": 2
-    }
+        "CHORD_RECOGNITION_CLASS": TemplatePredictStrategy,
+        "CHORD_LEARNING_CLASS": SVCLearn,
+    })
 
-    _audio_processing: AudioProcessing = None
-    _chord_recognition: PredictStrategy = None
-    _display: ChartBuilder = None
+    debug = ConfigAttribute("DEBUG")
+    charts = ConfigAttribute("CHARTS")
+    chart_chromagram = ConfigAttribute("CHART_CHROMAGRAM")
+    chart_prediction = ConfigAttribute("CHART_PREDICTION")
 
-    def __init__(self, config=None) -> None:
+    audio_processing = ContextAttribute("audio_processing")
+    chord_recognition = ContextAttribute("chord_recognition")
+    chord_learner = ContextAttribute("chord_recognition")
+    plotter = ContextAttribute("plotter")
+    config = ContextAttribute("config")
 
-        if config is None:
-            config = {}
-        _cfg = dict()
-        _cfg.update(self.default_config)
-        _cfg.update(config)
+    def __init__(self) -> None:
+        super().__init__()
 
-        super().__init__(_cfg)
+    def app_context(self) -> Context:
+        return _ctx_stack.top or self.with_config(None)
 
-        self._audio_processing = self.config["AP_FACTORY"](self)
-        self._chord_recognition = self.config["PREDICT_STRATEGY_FACTORY"](self)
-        self._display = ChartBuilder(
-            self.charts_rows,
-            self.charts_cols,
-            self.charts_width,
-            self.charts_height
-        )
+    def with_config(self, config):
+        return Context(self, config)
 
-    def from_path(self, absolute_path: str, annotation_path: str = None,
-                  chord_recognition_factory: PredictStrategy.factory = None):
+    def from_path(self, absolute_path: Union[Path, str], annotation_path: Union[Path, str] = None):
 
-        chroma_sync, beat_t = self._audio_processing.process(absolute_path)
+        ctx = self.app_context()
+        try:
+            ctx.push(State.PREDICTING)
 
-        if chord_recognition_factory is not None:
-            prediction = chord_recognition_factory(self).predict(chroma_sync)
-        else:
-            prediction = self._chord_recognition.predict(chroma_sync)
+            _absolute_path = Path(absolute_path) if isinstance(absolute_path, str) else absolute_path
+            _annotation_path = Path(annotation_path) if isinstance(annotation_path, str) else annotation_path
 
-        if self.charts:
-            if self.chart_chromagram:
-                self._display.chromagram(chroma_sync, beat_t)
-            if self.chart_prediction and annotation_path is not None:
-                annotation_timeline = parse_annotation(self, annotation_path)
-                prediction_timeline = make_timeline(beat_t, prediction)
-                self._display.prediction(prediction_timeline, annotation_timeline)
+            chroma_sync, beat_t = self.audio_processing.process(_absolute_path)
+            prediction = self.chord_recognition.predict(chroma_sync)
 
-        self._display.show()
-        return prediction
+            if self.charts:
+                if self.chart_chromagram:
+                    self.plotter.chromagram(chroma_sync, beat_t)
+                if self.chart_prediction and annotation_path is not None:
+                    annotation_timeline = parse_annotation(ctx, _annotation_path)
+                    prediction_timeline = make_timeline(beat_t, prediction)
+                    self.plotter.prediction(prediction_timeline, annotation_timeline)
+            self.plotter.show()
+
+            return prediction
+        finally:
+            ctx.pop()
+
+    def from_samples(self, paths: Iterator[Path] = None, labels: Iterator[IChord] = None,
+                     iterable: Iterator = None):
+
+        ctx = self.with_config({
+            "AP_BEAT_STRATEGY_CLASS": VectorBeatStrategy,
+        })
+
+        try:
+            ctx.push(State.LEARNING)
+
+            if iterable is None and (paths is None or labels is None):
+                raise IllegalArgumentError
+
+            _supervised_vectors = SupervisedVectors()
+
+            for absolute_path, label in (zip(paths, labels) if iterable is None else iterable):
+                vector, e = self.audio_processing.process(absolute_path)
+                _supervised_vectors.append(Vector(vector), label)
+
+            self.chord_learner.learn(_supervised_vectors)
+        finally:
+            ctx.pop()

@@ -26,103 +26,90 @@
 #
 #
 from abc import abstractmethod
-from typing import Iterable, Sized, Iterator
+from pathlib import Path
+from typing import Tuple, List, Sequence
 
 from pandas import read_csv
 
-from chordify.ctx import Context
-from chordify.exceptions import AnnotationParsingError
-from chordify.music import TemplateChordList
-from chordify.strategy import Strategy
+from .ctx import Context, _chord_resolution
+from .exceptions import AnnotationParsingError
+from .music import IChord, ChordKey
+from .strategy import Strategy
 
 
-class ChordTimeline(Iterator, Sized):
-    _start: tuple = tuple()
-    _stop: tuple = tuple()
-    _chords: tuple = tuple()
+class ChordTimeline(Sequence):
+    _start: List[float]
+    _stop: List[float]
+    _chords: List[IChord]
     _len: int = 0
     _counter: int = 0
 
-    def __init__(self) -> None:
+    def __init__(self):
         super().__init__()
+        self._start = list()
+        self._stop = list()
+        self._chords = list()
 
     def __iter__(self):
         self._counter = 0
         return self
 
-    def __next__(self):
+    def __next__(self) -> Tuple[float, float, IChord]:
         if self._counter < self._len:
             self._counter += 1
             return self._start[self._counter - 1], self._stop[self._counter - 1], self._chords[self._counter - 1]
         else:
             raise StopIteration
 
-    def __len__(self):
-        return self._len
-
-    def __getitem__(self, item):
+    def __getitem__(self, item) -> Tuple[float, float, IChord]:
         return self._start[item], self._stop[item], self._chords[item]
 
-    def append(self, start: float, stop: float, chord: str):
-        if start is None or stop is None or start < 0 or stop <= 0 or chord is None or len(chord) == 0:
+    def __len__(self) -> int:
+        return self._len
+
+    def append(self, start: float, stop: float, chord: IChord):
+        if start is None or stop is None or start < 0 or stop <= 0 or chord is None:
             raise AnnotationParsingError
 
-        _start = list(self._start)
-        _start.append(float(start))
-        self._start = tuple(_start)
-
-        _stop = list(self._stop)
-        _stop.append(float(stop))
-        self._stop = tuple(_stop)
-
-        _chords = list(self._chords)
-        _chords.append(str(chord))
-        self._chords = tuple(_chords)
-
+        self._start.append(float(start))
+        self._stop.append(float(stop))
+        self._chords.append(chord)
         self._len += 1
 
-    def start(self) -> Iterable:
-        return iter(self._start)
+    def start(self) -> Tuple[float, ...]:
+        return tuple(self._start)
 
-    def stop(self) -> Iterable:
-        return iter(self._stop)
+    def stop(self) -> Tuple[float, ...]:
+        return tuple(self._stop)
 
-    def chords(self) -> Iterable:
-        return iter(self._chords)
+    def chords(self) -> Tuple[IChord, ...]:
+        return tuple(self._chords)
 
-    def duration(self):
+    def duration(self) -> float:
         return self._stop[-1]
 
 
-class ParsingStrategy(Strategy):
-
-    @staticmethod
-    @abstractmethod
-    def factory(ctx: Context):
-        pass
+class AnnotationParser(Strategy):
 
     @staticmethod
     @abstractmethod
     def accept(ext: str) -> bool:
         pass
-
-    def __init__(self) -> None:
-        super().__init__()
 
     @abstractmethod
     def parse(self, absolute_path) -> ChordTimeline:
         pass
 
 
-class LabParser(ParsingStrategy):
+class LabParser(AnnotationParser):
 
     @staticmethod
     def factory(ctx: Context):
         return LabParser()
 
     @staticmethod
-    def accept(ext: str) -> bool:
-        return ext.endswith(".lab")
+    def accept(ext: Path) -> bool:
+        return ext.match("*.lab")
 
     def parse(self, absolute_path) -> ChordTimeline:
         assert self.__class__.accept(absolute_path)
@@ -131,37 +118,35 @@ class LabParser(ParsingStrategy):
 
         _timeline = ChordTimeline()
         for i, row in csv.iterrows():
-            start = float(row[0])
-            stop = float(row[1])
-            chord = normalize_chord(str(row[2]))
-            _timeline.append(start, stop, chord)
+            start, stop, chord = row
+            _timeline.append(float(start), float(stop), parse_chord(str(chord)))
 
         return _timeline
 
 
-def get_parser(ctx: Context, annotation_path: str) -> ParsingStrategy:
+def get_parser(ctx: Context, annotation_path: Path) -> AnnotationParser:
     for annotation_processor in __processors__:
         if annotation_processor.accept(annotation_path):
             return annotation_processor.factory(ctx)
     raise NotImplementedError("Not supported file format.")
 
 
-def parse_annotation(ctx: Context, annotation_path: str) -> ChordTimeline:
+def parse_annotation(ctx: Context, annotation_path: Path) -> ChordTimeline:
     return get_parser(ctx, annotation_path).parse(annotation_path)
 
 
-def normalize_chord(chord_label: str) -> str:
-    for chord in reversed(TemplateChordList.ALL):
-        if str(chord_label).startswith(str(chord)):
-            return str(chord)
-    return chord_label
+def parse_chord(chord_label: str) -> IChord:
+    for i_chord in reversed(_chord_resolution()):
+        if chord_label == str(i_chord.__repr__()):
+            return i_chord
+    return IChord(ChordKey.N, None)
 
 
-def make_timeline(beat_time: tuple, annotation: tuple) -> ChordTimeline:
+def make_timeline(beat_time: Sequence[float], annotation: Sequence[IChord]) -> ChordTimeline:
     start = 0.0
     _timeline = ChordTimeline()
     for stop, chord in zip(beat_time[1:], annotation):
-        _timeline.append(start, stop, str(chord))
+        _timeline.append(start, stop, chord)
         start = stop
 
     return _timeline

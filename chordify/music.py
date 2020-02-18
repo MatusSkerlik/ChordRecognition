@@ -11,19 +11,11 @@
 #
 #  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
 #  INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
-#  PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+#  PURPOSE AND NON INFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
 #  LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT
 #  OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 #  OTHER DEALINGS IN THE SOFTWARE.
 #
-
-from abc import abstractmethod, ABCMeta
-from collections import deque
-from enum import Enum
-from itertools import cycle
-from math import log
-from typing import Tuple, List, Iterable, Collection, Sized
-
 #
 #  Permission is hereby granted, free of charge, to any person obtaining a copy of this
 #  software and associated documentation files (the "Software"), to deal in the Software
@@ -33,9 +25,18 @@ from typing import Tuple, List, Iterable, Collection, Sized
 #
 #
 #
+
+from abc import abstractmethod, ABCMeta, ABC
+from collections import deque
+from enum import Enum
+from functools import cached_property
+from itertools import cycle, product
+from math import log
+from typing import Tuple, List, Iterable, Collection, Sized, Sequence, Union
+
 import numpy as np
 
-from chordify.exceptions import IllegalStateError, IllegalArgumentError
+from .exceptions import IllegalStateError, IllegalArgumentError
 
 
 def _rotate_right(vector: 'Vector', r: int) -> 'Vector':
@@ -92,6 +93,9 @@ class ChordType(Enum):
     AUGMENTED = ":aug"
     DIMINISHED = ":dim"
 
+    def __str__(self):
+        return '%s' % self.value
+
 
 class ChordKey(Enum):
     C = "C"
@@ -106,6 +110,10 @@ class ChordKey(Enum):
     A = "A"
     As = "A#"
     B = "B"
+    N = "N"
+
+    def __str__(self):
+        return '%s' % self.value
 
     def frequency(self):
         for i, k in enumerate(self.__class__.__iter__()):
@@ -121,13 +129,10 @@ class ChordKey(Enum):
 
 
 class Vector(Sized, Iterable):
-    _vector: tuple = None
+    _vector: Tuple[float, ...]
 
-    def __init__(self, vector: Collection) -> None:
+    def __init__(self, vector: Sequence[float]) -> None:
         super().__init__()
-
-        if len(vector) != 12:
-            raise IllegalArgumentError
 
         self._vector = tuple(vector)
 
@@ -135,7 +140,7 @@ class Vector(Sized, Iterable):
         return iter(self._vector)
 
     def __len__(self):
-        return 12
+        return len(self._vector)
 
     def __getitem__(self, item):
         return self._vector[item]
@@ -166,12 +171,9 @@ class Vector(Sized, Iterable):
 class MutableVector(Vector):
 
     def __setitem__(self, key, value):
-        if 0 <= key < 12:
-            _vector = list(self._vector)
-            _vector[key] = value
-            self._vector = tuple(_vector)
-        else:
-            raise IllegalArgumentError
+        _vector = list(self._vector)
+        _vector[key] = float(value)
+        self._vector = tuple(_vector)
 
 
 class ZeroVector(MutableVector):
@@ -180,18 +182,37 @@ class ZeroVector(MutableVector):
         super().__init__(tuple(0.0 for i in range(12)))
 
 
-class Chord(object, metaclass=ABCMeta):
-    _chord_type: ChordType = None
-    _chord_key: ChordKey = None
+class IChord(object):
+    _chord_type: ChordType
+    _chord_key: ChordKey
 
-    def __init__(self, chord_key: ChordKey, chord_type: ChordType):
+    def __init__(self, chord_key: ChordKey, chord_type: Union[ChordType, None]):
         super().__init__()
 
         self._chord_type = chord_type
         self._chord_key = chord_key
 
+    def __eq__(self, other):
+        if isinstance(other, IChord):
+            return self._chord_key == other._chord_key and self._chord_type == other._chord_type
+        raise NotImplementedError
+
+    def __ne__(self, other):
+        if isinstance(other, IChord):
+            return self._chord_key != other._chord_key or self._chord_type != other._chord_type
+        raise NotImplementedError
+
+    def __hash__(self):
+        return hash((self._chord_key, self._chord_type))
+
     def __repr__(self) -> str:
-        return '%s%s' % (self._chord_key.value, self._chord_type.value)
+        try:
+            return '%s%s' % (self._chord_key.value, self._chord_type.value)
+        except AttributeError:
+            return '%s' % self._chord_key.value
+
+
+class Chord(IChord, metaclass=ABCMeta):
 
     @property
     def key(self):
@@ -201,7 +222,7 @@ class Chord(object, metaclass=ABCMeta):
     def type(self):
         return self._chord_type
 
-    @property
+    @cached_property
     @abstractmethod
     def vector(self) -> Vector:
         pass
@@ -219,7 +240,7 @@ class TemplateChord(Chord):
                 return i
         raise IllegalStateError
 
-    @property
+    @cached_property
     def vector(self) -> Vector:
 
         _shift = self.shift()
@@ -235,24 +256,54 @@ class TemplateChord(Chord):
         raise IllegalStateError
 
 
-class TemplateChordList(object):
-    MAJOR = tuple(TemplateChord(chord_key, ChordType.MAJOR) for chord_key in ChordKey)
-    MINOR = tuple(TemplateChord(chord_key, ChordType.MINOR) for chord_key in ChordKey)
-    AUGMENTED = tuple(TemplateChord(chord_key, ChordType.AUGMENTED) for chord_key in ChordKey)
-    DIMINISHED = tuple(TemplateChord(chord_key, ChordType.DIMINISHED) for chord_key in ChordKey)
-    ALL = tuple(np.array([MAJOR, MINOR, AUGMENTED, DIMINISHED]).flatten())
-
-
 class HarmonicChord(TemplateChord):
 
-    @property
+    @cached_property
     def vector(self) -> Vector:
         return super().vector + _harm_to_vector(_harmonics(self.key))
 
 
-class HarmonicChordList(object):
-    MAJOR = tuple(HarmonicChord(chord_key, ChordType.MAJOR) for chord_key in ChordKey)
-    MINOR = tuple(HarmonicChord(chord_key, ChordType.MINOR) for chord_key in ChordKey)
-    AUGMENTED = tuple(HarmonicChord(chord_key, ChordType.AUGMENTED) for chord_key in ChordKey)
-    DIMINISHED = tuple(HarmonicChord(chord_key, ChordType.DIMINISHED) for chord_key in ChordKey)
+class Resolution(ABC):
+
+    @abstractmethod
+    def __iter__(self):
+        pass
+
+    def __reversed__(self):
+        return reversed(tuple(self.__iter__()))
+
+
+class BasicResolution(Resolution):
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def __iter__(self):
+        return iter(IChord(k, t) for t, k in product(ChordType.__iter__(), ChordKey.__iter__()) if k != ChordKey.N)
+
+
+class StrictResolution(Resolution):
+
+    def __init__(self, chords: Sequence[IChord]) -> None:
+        super().__init__()
+
+        self._chords = set(chords)
+
+    def __iter__(self):
+        return iter(self._chords)
+
+
+class TemplateChords(object):
+    MAJOR = tuple(TemplateChord(key, ChordType.MAJOR) for key in ChordKey if key != ChordKey.N)
+    MINOR = tuple(TemplateChord(key, ChordType.MINOR) for key in ChordKey if key != ChordKey.N)
+    AUGMENTED = tuple(TemplateChord(key, ChordType.AUGMENTED) for key in ChordKey if key != ChordKey.N)
+    DIMINISHED = tuple(TemplateChord(key, ChordType.DIMINISHED) for key in ChordKey if key != ChordKey.N)
+    ALL = tuple(np.array([MAJOR, MINOR, AUGMENTED, DIMINISHED]).flatten())
+
+
+class HarmonicChords(object):
+    MAJOR = tuple(HarmonicChord(key, ChordType.MAJOR) for key in ChordKey if key != ChordKey.N)
+    MINOR = tuple(HarmonicChord(key, ChordType.MINOR) for key in ChordKey if key != ChordKey.N)
+    AUGMENTED = tuple(HarmonicChord(key, ChordType.AUGMENTED) for key in ChordKey if key != ChordKey.N)
+    DIMINISHED = tuple(HarmonicChord(key, ChordType.DIMINISHED) for key in ChordKey if key != ChordKey.N)
     ALL = tuple(np.array([MAJOR, MINOR, AUGMENTED, DIMINISHED]).flatten())

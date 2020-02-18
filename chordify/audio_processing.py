@@ -26,72 +26,53 @@
 #
 #
 #
-from abc import ABCMeta, abstractmethod
+import logging
+from abc import abstractmethod, ABC
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import librosa
 import numpy as np
-import scipy.ndimage
 
-from chordify.strategy import Strategy
 from .ctx import Context
 from .exceptions import IllegalArgumentError
+from .strategy import Strategy
 
 
-class LoadStrategy(Strategy, metaclass=ABCMeta):
-
-    @staticmethod
-    @abstractmethod
-    def factory(context: Context) -> 'LoadStrategy':
-        pass
+class LoadStrategy(Strategy, ABC):
 
     @abstractmethod
-    def run(self, absolute_path) -> np.ndarray:
+    def run(self, absolute_path: Path) -> np.ndarray:
         pass
 
 
-class STFTStrategy(Strategy, metaclass=ABCMeta):
-
-    @staticmethod
-    @abstractmethod
-    def factory(context: Context) -> 'STFTStrategy':
-        pass
+class STFTStrategy(Strategy, ABC):
 
     @abstractmethod
     def run(self, y: np.ndarray) -> np.ndarray:
         pass
 
 
-class ChromaStrategy(Strategy, metaclass=ABCMeta):
-
-    @staticmethod
-    @abstractmethod
-    def factory(context: Context) -> 'ChromaStrategy':
-        pass
+class ChromaStrategy(Strategy, ABC):
 
     @abstractmethod
     def run(self, c: np.ndarray) -> np.ndarray:
         pass
 
 
-class BeatStrategy(Strategy, metaclass=ABCMeta):
-
-    @staticmethod
-    @abstractmethod
-    def factory(context: Context) -> 'BeatStrategy':
-        pass
+class BeatStrategy(Strategy, ABC):
 
     @abstractmethod
     def run(self, y: np.ndarray, chroma: np.ndarray) -> (np.ndarray, Any):
         pass
 
 
-class URILoadStrategy(LoadStrategy):
+class PathLoadStrategy(LoadStrategy):
 
     @staticmethod
-    def factory(context) -> LoadStrategy:
-        return URILoadStrategy(context.config["SAMPLING_FREQUENCY"])
+    def factory(context):
+        return PathLoadStrategy(context.config["SAMPLING_FREQUENCY"])
 
     def __init__(self, sampling_frequency: int):
         super().__init__()
@@ -99,7 +80,7 @@ class URILoadStrategy(LoadStrategy):
         self._sr = sampling_frequency
 
     @lru_cache(maxsize=None)
-    def run(self, absolute_path) -> np.ndarray:
+    def run(self, absolute_path: Path) -> np.ndarray:
         y, sr = librosa.load(absolute_path, self._sr)
         y_harm = librosa.effects.harmonic(y=y, margin=8)
         return y_harm
@@ -108,7 +89,7 @@ class URILoadStrategy(LoadStrategy):
 class CQTStrategy(STFTStrategy):
 
     @staticmethod
-    def factory(context: Context) -> 'STFTStrategy':
+    def factory(context: Context):
         return CQTStrategy(context.config["SAMPLING_FREQUENCY"],
                            context.config["HOP_LENGTH"],
                            context.config["MIN_FREQ"],
@@ -138,7 +119,7 @@ class CQTStrategy(STFTStrategy):
 class FilteringChromaStrategy(ChromaStrategy):
 
     @staticmethod
-    def factory(context: Context) -> 'ChromaStrategy':
+    def factory(context: Context):
         return FilteringChromaStrategy(
             context.config["HOP_LENGTH"],
             context.config["MIN_FREQ"],
@@ -162,17 +143,52 @@ class FilteringChromaStrategy(ChromaStrategy):
             n_octaves=self._n_octaves
         )
 
+        return np.minimum(chroma,
+                          librosa.decompose.nn_filter(chroma,
+                                                      aggregate=np.median,
+                                                      metric='cosine'))
+
+
+class HPSSChromaStrategy(ChromaStrategy):
+
+    @staticmethod
+    def factory(context: Context):
+        return HPSSChromaStrategy(
+            context.config["HOP_LENGTH"],
+            context.config["MIN_FREQ"],
+            context.config["BINS_PER_OCTAVE"],
+            context.config["N_OCTAVES"]
+        )
+
+    def __init__(self, hop_length: int, min_freq: int, bins_per_octave: int, n_octaves: int) -> None:
+        super().__init__()
+        self._hop_length = hop_length
+        self._min_freq = min_freq
+        self._bins_per_octave = bins_per_octave
+        self._n_octaves = n_octaves
+
+    def run(self, c: np.ndarray) -> np.ndarray:
+        h, p = librosa.decompose.hpss(c)
+
+        chroma = librosa.feature.chroma_cqt(
+            C=h,
+            hop_length=self._hop_length,
+            fmin=self._min_freq,
+            bins_per_octave=self._bins_per_octave,
+            n_octaves=self._n_octaves
+        )
+
         chroma = np.minimum(chroma,
                             librosa.decompose.nn_filter(chroma,
                                                         aggregate=np.median,
                                                         metric='cosine'))
-        return scipy.ndimage.median_filter(chroma, size=(1, 9))
+        return chroma
 
 
 class SyncBeatStrategy(BeatStrategy):
 
     @staticmethod
-    def factory(context: Context) -> 'BeatStrategy':
+    def factory(context: Context):
         return SyncBeatStrategy(context.config["SAMPLING_FREQUENCY"],
                                 context.config["HOP_LENGTH"])
 
@@ -184,9 +200,8 @@ class SyncBeatStrategy(BeatStrategy):
 
     def run(self, y: np.ndarray, chroma: np.ndarray) -> (np.ndarray, Any):
         tempo, beat_f = librosa.beat.beat_track(y=y, sr=self._sr, hop_length=self._hop_length, trim=False)
-        beat_f = librosa.util.fix_frames(beat_f)
+        beat_f = librosa.util.fix_frames(beat_f, x_max=chroma.shape[1])
         frames = librosa.util.sync(chroma, beat_f, aggregate=np.median)
-
         beat_t = librosa.frames_to_time(beat_f, sr=self._sr, hop_length=self._hop_length)
         return frames, beat_t
 
@@ -194,22 +209,36 @@ class SyncBeatStrategy(BeatStrategy):
 class NoBeatStrategy(BeatStrategy):
 
     @staticmethod
-    def factory(context: Context) -> 'BeatStrategy':
+    def factory(context: Context):
         return NoBeatStrategy()
 
-    def run(self, y: np.ndarray, chroma: np.ndarray) -> (np.ndarray, Any):
+    def run(self, y: np.ndarray, chroma: np.ndarray) -> (np.ndarray, None):
         return y, None
 
 
-class AudioProcessing(object):
+class VectorBeatStrategy(BeatStrategy):
+
+    @staticmethod
+    def factory(context: Context):
+        return VectorBeatStrategy()
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def run(self, y: np.ndarray, chroma: np.ndarray) -> (np.ndarray, None):
+        vector = librosa.util.sync(chroma, [0], aggregate=np.median)
+        return vector.flatten(), None
+
+
+class AudioProcessing(Strategy):
 
     @staticmethod
     def factory(ctx: Context):
         return AudioProcessing(
-            ctx.config["AP_LOAD_STRATEGY_FACTORY"](ctx),
-            ctx.config["AP_STFT_STRATEGY_FACTORY"](ctx),
-            ctx.config["AP_CHROMA_STRATEGY_FACTORY"](ctx),
-            ctx.config["AP_BEAT_STRATEGY_FACTORY"](ctx)
+            ctx.config["AP_LOAD_STRATEGY_CLASS"].factory(ctx),
+            ctx.config["AP_STFT_STRATEGY_CLASS"].factory(ctx),
+            ctx.config["AP_CHROMA_STRATEGY_CLASS"].factory(ctx),
+            ctx.config["AP_BEAT_STRATEGY_CLASS"].factory(ctx)
         )
 
     def __init__(self, load_strategy: LoadStrategy, stft_strategy: STFTStrategy, chroma_strategy: ChromaStrategy,
@@ -230,7 +259,8 @@ class AudioProcessing(object):
         self.chroma_strategy = chroma_strategy
         self.beat_strategy = beat_strategy
 
-    def process(self, absolute_path) -> (np.ndarray, Any):
+    def process(self, absolute_path: Path) -> (np.ndarray, Any):
+        logging.warning("AudioProcessing: Processing " + absolute_path.__str__())
         y = self.load_strategy.run(absolute_path)
         c = self.stft_strategy.run(y)
         chroma = self.chroma_strategy.run(c)

@@ -17,6 +17,12 @@
 #  OTHER DEALINGS IN THE SOFTWARE.
 #
 
+from itertools import chain
+from types import FunctionType
+from typing import Iterable, List
+
+import librosa.display
+import matplotlib.pyplot as plt
 #
 #  Permission is hereby granted, free of charge, to any person obtaining a copy of this
 #  software and associated documentation files (the "Software"), to deal in the Software
@@ -26,36 +32,45 @@
 #
 #
 #
-
-from types import FunctionType
-from typing import Iterable
-
-import librosa.display
-import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.axes import Axes
 
-from chordify.annotation import ChordTimeline
-from chordify.music import TemplateChordList
+from .annotation import ChordTimeline
+from .ctx import Context, _chord_resolution
+from .music import BasicResolution, IChord
+from .utils import score
 
 
-class ChartBuilder(object):
-    _n_cols: int = 1
-    _n_rows: int = 0
-    _auto = False
-    _n_func = list()
-    _default_width = 6
-    _default_height = 8
+class Plotter(object):
+    _n_cols: int
+    _n_rows: int
+    _auto: bool
+    _n_func: List[FunctionType]
+    _default_width: int = 6
+    _default_height: int = 8
+
+    @staticmethod
+    def factory(ctx: Context):
+        return Plotter(
+            ctx.config["CHARTS_ROWS"],
+            ctx.config["CHARTS_COLS"],
+            ctx.config["CHARTS_WIDTH"],
+            ctx.config["CHARTS_HEIGHT"]
+        )
 
     def __init__(self, n_rows: int = None, n_cols: int = None, width: int = None, height: int = None) -> None:
 
+        self._n_func = list()
         self.height = height or self._default_width
         self.width = width or self._default_width
 
         if n_rows is not None and n_cols is not None and n_rows > 0 and n_cols > 0:
             self._n_rows = n_rows
             self._n_cols = n_cols
+            self._auto = False
         else:
+            self._n_rows = 0
+            self._n_cols = 1
             self._auto = True
 
     def _add(self, func):
@@ -78,30 +93,35 @@ class ChartBuilder(object):
         return self
 
     def prediction(self, predicted: ChordTimeline, annotation: ChordTimeline):
-        _ch_str = ["N"]
-        _ch_str.extend(list(map(lambda t: str(t), reversed(TemplateChordList.ALL))))
+        self.width += 6
 
-        def index(chord: str):
-            return _ch_str.index(chord)
+        _ch_str = ["N"]
+        _ch_str.extend(list(map(lambda t: str(t), reversed(_chord_resolution()))))
+
+        def index(chord: IChord):
+            try:
+                return _ch_str.index(str(chord))
+            except ValueError:
+                return 0
 
         def plot(ax: Axes):
-            x_p = list(np.array(list((start, stop) for start, stop, chord in predicted)).flatten())
-            y_p = list(np.array(list((index(chord), index(chord)) for start, stop, chord in predicted)).flatten())
-            x_o = list(np.array(list((start, stop) for start, stop, chord in annotation)).flatten())
-            y_o = list(np.array(list((index(chord), index(chord)) for start, stop, chord in annotation)).flatten())
+            x_p = list(chain(*((start, stop) for start, stop, chord in predicted)))
+            y_p = list(chain(*((index(chord), index(chord)) for start, stop, chord in predicted)))
+            x_a = list(chain(*((start, stop) for start, stop, chord in annotation)))
+            y_a = list(chain(*((index(chord), index(chord)) for start, stop, chord in annotation)))
 
             ax.set_yticklabels(_ch_str)
-            ax.set_yticks(range(0, len(TemplateChordList.ALL)))
+            ax.set_yticks(range(0, len(tuple(BasicResolution())) + 1))
             ax.set_ylabel('Chords')
             ax.set_xlim(0, annotation.duration())
             ax.set_xlabel('Time (s)')
 
             ax.xaxis.set_major_locator(plt.LinearLocator())
 
-            ax.bar(x_p, y_p, color="darkgrey")
-            ax.plot(x_o, y_o, 'r-')
+            ax.bar(x_p, y_p, color="darkgrey", linewidth=1, ecolor=None)
+            ax.plot(x_a, y_a, 'r-', linewidth=1)
 
-            ax.set_title("Chord Prediction")
+            ax.set_title("Chord Prediction " + str(round(score(predicted, annotation), 2)) + "%")
 
         self._add(plot)
         return self

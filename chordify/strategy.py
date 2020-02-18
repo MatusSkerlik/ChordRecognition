@@ -26,8 +26,12 @@
 #
 #
 #
-from abc import ABCMeta
+from abc import ABC, abstractmethod
 
 
-class Strategy(metaclass=ABCMeta):
-    pass
+class Strategy(ABC):
+
+    @staticmethod
+    @abstractmethod
+    def factory(*args, **kwargs):
+        pass

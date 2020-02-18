@@ -38,3 +38,7 @@ class IllegalStateError(ValueError):
 
 class AnnotationParsingError(ValueError):
     pass
+
+
+class IllegalConfigError(ValueError):
+    pass

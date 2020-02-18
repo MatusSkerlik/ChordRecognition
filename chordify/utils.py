@@ -27,48 +27,65 @@
 #
 #
 
-from copy import deepcopy
-from typing import List
+from os import listdir
+from pathlib import Path
+from typing import Tuple
+
+from .annotation import ChordTimeline
+from .music import IChord
 
 
-def evaluate(original: List, predicted: List) -> (float, float):
-    original_copy = deepcopy(original)
-    predicted_copy = deepcopy(predicted)
+class SupervisedDirectoryAdapter(object):
+    _chord: IChord
+    _files: Tuple[str]
+    _len: int
+    _n: int
 
-    original_copy.reverse()
-    predicted_copy.reverse()
+    def __init__(self, directory: Path, chord: IChord) -> None:
+        super().__init__()
+        self._chord = chord
+        self._directory = directory
+        self._files = listdir(directory)
+        self._len = len(self._files)
+        self._n = 0
 
-    sums = 0
-    total = 1
+    def __iter__(self):
+        self._n = 0
+        return self
 
-    if len(original_copy) > 0 and len(predicted_copy) > 0:
+    def __next__(self) -> Tuple[Path, IChord]:
+        if self._n < self._len:
+            self._n += 1
+            return self._directory / Path(self._files[self._n - 1]), self._chord
+        else:
+            raise StopIteration
 
-        org = original_copy.pop()
-        pred = predicted_copy.pop()
+    def __len__(self):
+        return self._len
 
-        while len(original_copy) > 0 and len(predicted_copy) > 0:
 
-            if pred[1] < org[0]:
-                pred = predicted_copy.pop()
-                continue
-            elif pred[0] > org[1]:
-                org = original_copy.pop()
-                total += 1
-                continue
+def score(prediction: ChordTimeline, annotation: ChordTimeline) -> float:
+    _correct = 0
+    _i_annotation = 0
+    _i_prediction = 0
+    while _i_annotation < len(annotation) and _i_prediction < len(prediction):
+        start, stop, chord = annotation[_i_annotation]
+        p_start, p_stop, p_chord = prediction[_i_prediction]
 
-            pred_len = pred[1] - pred[0]
-            org_len = org[1] - org[0]
+        if p_stop < start:
+            _i_prediction += 1
+            continue
+        elif stop < p_start:
+            _i_annotation += 1
+            continue
 
-            if org[2].find(pred[2]) > -1:
-                if pred[0] <= org[0]:
-                    if pred[1] <= org[1]:
-                        sums += (pred_len - (org[0] - pred[0])) / org_len
-                    else:
-                        sums += 1
-                elif pred[0] >= org[0]:
-                    if pred[1] <= org[1]:
-                        sums += pred_len / org_len
-                    else:
-                        sums += (pred_len - (pred[1] - org[1])) / org_len
-            pred = predicted_copy.pop()
-    return sums / total
+        if p_start <= start and p_stop < stop and chord == p_chord:
+            _correct += (p_stop - start) / (stop - start)
+        elif p_start >= start and p_stop <= stop and chord == p_chord:
+            _correct += (p_stop - p_start) / (stop - start)
+        elif p_start > start and p_stop >= stop and chord == p_chord:
+            _correct += (stop - p_start) / (stop - start)
+        elif p_start <= start and p_stop >= stop and chord == p_chord:
+            _correct += (stop - start) / (p_stop - p_start)
+        _i_prediction += 1
+    return _correct / len(annotation)
