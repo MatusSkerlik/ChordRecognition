@@ -202,6 +202,16 @@ class IChord(object):
             return self._chord_key != other._chord_key or self._chord_type != other._chord_type
         raise NotImplementedError
 
+    def __lt__(self, other):
+        if isinstance(other, IChord):
+            return self.__repr__() < other.__repr__()
+        raise NotImplementedError
+
+    def __gt__(self, other):
+        if isinstance(other, IChord):
+            return self.__repr__() > other.__repr__()
+        raise NotImplementedError
+
     def __hash__(self):
         return hash((self._chord_key, self._chord_type))
 
@@ -286,7 +296,6 @@ class StrictResolution(Resolution):
 
     def __init__(self, chords: Sequence[IChord]) -> None:
         super().__init__()
-
         self._chords = set(sorted(chords))
 
     def __iter__(self):
