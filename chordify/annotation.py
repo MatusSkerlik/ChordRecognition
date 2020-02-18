@@ -31,7 +31,7 @@ from typing import Tuple, List, Sequence
 
 from pandas import read_csv
 
-from .ctx import Context, _chord_resolution
+from .ctx import _chord_resolution
 from .exceptions import AnnotationParsingError
 from .music import IChord, ChordKey
 from .strategy import Strategy
@@ -104,7 +104,7 @@ class AnnotationParser(Strategy):
 class LabParser(AnnotationParser):
 
     @staticmethod
-    def factory(ctx: Context):
+    def factory(config, *args, **kwargs):
         return LabParser()
 
     @staticmethod
@@ -124,15 +124,15 @@ class LabParser(AnnotationParser):
         return _timeline
 
 
-def get_parser(ctx: Context, annotation_path: Path) -> AnnotationParser:
+def get_parser(config, annotation_path: Path) -> AnnotationParser:
     for annotation_processor in __processors__:
         if annotation_processor.accept(annotation_path):
-            return annotation_processor.factory(ctx)
+            return annotation_processor.factory(config)
     raise NotImplementedError("Not supported file format.")
 
 
-def parse_annotation(ctx: Context, annotation_path: Path) -> ChordTimeline:
-    return get_parser(ctx, annotation_path).parse(annotation_path)
+def parse_annotation(config, annotation_path: Path) -> ChordTimeline:
+    return get_parser(config, annotation_path).parse(annotation_path)
 
 
 def parse_chord(chord_label: str) -> IChord:

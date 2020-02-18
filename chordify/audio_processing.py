@@ -26,7 +26,6 @@
 #
 #
 #
-import logging
 from abc import abstractmethod, ABC
 from functools import lru_cache
 from pathlib import Path
@@ -35,7 +34,7 @@ from typing import Any
 import librosa
 import numpy as np
 
-from .ctx import Context
+from chordify.logger import log
 from .exceptions import IllegalArgumentError
 from .strategy import Strategy
 
@@ -70,9 +69,10 @@ class BeatStrategy(Strategy, ABC):
 
 class PathLoadStrategy(LoadStrategy):
 
-    @staticmethod
-    def factory(context):
-        return PathLoadStrategy(context.config["SAMPLING_FREQUENCY"])
+    @classmethod
+    def factory(cls, config, *args, **kwargs):
+        log(cls, "Init")
+        return PathLoadStrategy(config["SAMPLING_FREQUENCY"])
 
     def __init__(self, sampling_frequency: int):
         super().__init__()
@@ -88,13 +88,14 @@ class PathLoadStrategy(LoadStrategy):
 
 class CQTStrategy(STFTStrategy):
 
-    @staticmethod
-    def factory(context: Context):
-        return CQTStrategy(context.config["SAMPLING_FREQUENCY"],
-                           context.config["HOP_LENGTH"],
-                           context.config["MIN_FREQ"],
-                           context.config["N_BINS"],
-                           context.config["BINS_PER_OCTAVE"])
+    @classmethod
+    def factory(cls, config, *args, **kwargs):
+        log(cls, "Init")
+        return CQTStrategy(config["SAMPLING_FREQUENCY"],
+                           config["HOP_LENGTH"],
+                           config["MIN_FREQ"],
+                           config["N_BINS"],
+                           config["BINS_PER_OCTAVE"])
 
     def __init__(self, sampling_frequency: int, hop_length: int, min_freq: int, n_bins: int,
                  bins_per_octave: int) -> None:
@@ -118,13 +119,14 @@ class CQTStrategy(STFTStrategy):
 
 class FilteringChromaStrategy(ChromaStrategy):
 
-    @staticmethod
-    def factory(context: Context):
+    @classmethod
+    def factory(cls, config, *args, **kwargs):
+        log(cls, "Init")
         return FilteringChromaStrategy(
-            context.config["HOP_LENGTH"],
-            context.config["MIN_FREQ"],
-            context.config["BINS_PER_OCTAVE"],
-            context.config["N_OCTAVES"]
+            config["HOP_LENGTH"],
+            config["MIN_FREQ"],
+            config["BINS_PER_OCTAVE"],
+            config["N_OCTAVES"]
         )
 
     def __init__(self, hop_length: int, min_freq: int, bins_per_octave: int, n_octaves: int) -> None:
@@ -151,13 +153,14 @@ class FilteringChromaStrategy(ChromaStrategy):
 
 class HPSSChromaStrategy(ChromaStrategy):
 
-    @staticmethod
-    def factory(context: Context):
+    @classmethod
+    def factory(cls, config, *args, **kwargs):
+        log(cls, "Init")
         return HPSSChromaStrategy(
-            context.config["HOP_LENGTH"],
-            context.config["MIN_FREQ"],
-            context.config["BINS_PER_OCTAVE"],
-            context.config["N_OCTAVES"]
+            config["HOP_LENGTH"],
+            config["MIN_FREQ"],
+            config["BINS_PER_OCTAVE"],
+            config["N_OCTAVES"]
         )
 
     def __init__(self, hop_length: int, min_freq: int, bins_per_octave: int, n_octaves: int) -> None:
@@ -187,10 +190,13 @@ class HPSSChromaStrategy(ChromaStrategy):
 
 class SyncBeatStrategy(BeatStrategy):
 
-    @staticmethod
-    def factory(context: Context):
-        return SyncBeatStrategy(context.config["SAMPLING_FREQUENCY"],
-                                context.config["HOP_LENGTH"])
+    @classmethod
+    def factory(cls, config, *args, **kwargs):
+        log(cls, "Init")
+        return SyncBeatStrategy(
+            config["SAMPLING_FREQUENCY"],
+            config["HOP_LENGTH"]
+        )
 
     def __init__(self, sampling_frequency: int, hop_length: int) -> None:
         super().__init__()
@@ -208,8 +214,9 @@ class SyncBeatStrategy(BeatStrategy):
 
 class NoBeatStrategy(BeatStrategy):
 
-    @staticmethod
-    def factory(context: Context):
+    @classmethod
+    def factory(cls, config, *args, **kwargs):
+        log(cls, "Init")
         return NoBeatStrategy()
 
     def run(self, y: np.ndarray, chroma: np.ndarray) -> (np.ndarray, None):
@@ -218,8 +225,9 @@ class NoBeatStrategy(BeatStrategy):
 
 class VectorBeatStrategy(BeatStrategy):
 
-    @staticmethod
-    def factory(context: Context):
+    @classmethod
+    def factory(cls, config):
+        log(cls, "Init")
         return VectorBeatStrategy()
 
     def __init__(self) -> None:
@@ -232,13 +240,14 @@ class VectorBeatStrategy(BeatStrategy):
 
 class AudioProcessing(Strategy):
 
-    @staticmethod
-    def factory(ctx: Context):
+    @classmethod
+    def factory(cls, config, *args, **kwargs):
+        log(cls, "Init")
         return AudioProcessing(
-            ctx.config["AP_LOAD_STRATEGY_CLASS"].factory(ctx),
-            ctx.config["AP_STFT_STRATEGY_CLASS"].factory(ctx),
-            ctx.config["AP_CHROMA_STRATEGY_CLASS"].factory(ctx),
-            ctx.config["AP_BEAT_STRATEGY_CLASS"].factory(ctx)
+            config["AP_LOAD_STRATEGY_CLASS"].factory(config),
+            config["AP_STFT_STRATEGY_CLASS"].factory(config),
+            config["AP_CHROMA_STRATEGY_CLASS"].factory(config),
+            config["AP_BEAT_STRATEGY_CLASS"].factory(config)
         )
 
     def __init__(self, load_strategy: LoadStrategy, stft_strategy: STFTStrategy, chroma_strategy: ChromaStrategy,
@@ -260,8 +269,9 @@ class AudioProcessing(Strategy):
         self.beat_strategy = beat_strategy
 
     def process(self, absolute_path: Path) -> (np.ndarray, Any):
-        logging.warning("AudioProcessing: Processing " + absolute_path.__str__())
+        log(self.__class__, "Processing = " + str(absolute_path.resolve()))
         y = self.load_strategy.run(absolute_path)
         c = self.stft_strategy.run(y)
         chroma = self.chroma_strategy.run(c)
         return self.beat_strategy.run(y, chroma)
+

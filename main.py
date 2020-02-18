@@ -16,27 +16,29 @@
 #  OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 #  OTHER DEALINGS IN THE SOFTWARE.
 #
+from itertools import chain
+from pathlib import Path
 
 from chordify.app import Chordify
 from chordify.audio_processing import HPSSChromaStrategy
-from chordify.learn import SVCLearn
+from chordify.music import ChordKey, ChordType, IChord
+from chordify.utils import SupervisedDirectoryAdapter
 
 app = Chordify()
 with app.with_config({
-    "CHORD_RECOGNITION_CLASS": SVCLearn,
-    "AP_CHROMA_STRATEGY_CLASS": HPSSChromaStrategy
+    "AP_CHROMA_STRATEGY_CLASS": HPSSChromaStrategy,
 }) as m_app:
-    # m_app.from_samples(iterable=chain(
-    #    SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/a"), IChord(ChordKey.A, ChordType.MAJOR)),
-    #    SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/am"), IChord(ChordKey.A, ChordType.MINOR)),
-    #    SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/bm"), IChord(ChordKey.B, ChordType.MINOR)),
-    #    SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/c"), IChord(ChordKey.C, ChordType.MAJOR)),
-    #    SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/d"), IChord(ChordKey.D, ChordType.MAJOR)),
-    #    SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/dm"), IChord(ChordKey.D, ChordType.MINOR)),
-    #    SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/e"), IChord(ChordKey.E, ChordType.MAJOR)),
-    #    SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/em"), IChord(ChordKey.E, ChordType.MINOR)),
-    #    SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/f"), IChord(ChordKey.F, ChordType.MAJOR)),
-    #    SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/g"), IChord(ChordKey.G, ChordType.MAJOR))
-    # ))
+    m_app.from_samples(iterable=chain(
+        SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/a"), IChord(ChordKey.A, ChordType.MAJOR)),
+        SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/am"), IChord(ChordKey.A, ChordType.MINOR)),
+        SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/bm"), IChord(ChordKey.B, ChordType.MINOR)),
+        SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/c"), IChord(ChordKey.C, ChordType.MAJOR)),
+        SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/d"), IChord(ChordKey.D, ChordType.MAJOR)),
+        SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/dm"), IChord(ChordKey.D, ChordType.MINOR)),
+        SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/e"), IChord(ChordKey.E, ChordType.MAJOR)),
+        SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/em"), IChord(ChordKey.E, ChordType.MINOR)),
+        SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/f"), IChord(ChordKey.F, ChordType.MAJOR)),
+        SupervisedDirectoryAdapter(Path("./chords/Guitar_Only/g"), IChord(ChordKey.G, ChordType.MAJOR))
+    ))
     p = m_app.from_path("./song.m4a", "./chords.lab")
     print(p)

@@ -30,7 +30,7 @@ from typing import Sequence
 
 import numpy as np
 
-from .ctx import Context
+from chordify.logger import log
 from .music import TemplateChords, HarmonicChords, Resolution, BasicResolution, IChord
 from .strategy import Strategy
 
@@ -49,8 +49,9 @@ class PredictStrategy(Strategy):
 
 class TemplatePredictStrategy(PredictStrategy):
 
-    @staticmethod
-    def factory(ctx: Context, **kwargs):
+    @classmethod
+    def factory(cls, config, *args, **kwargs):
+        log(cls, "Init")
         return TemplatePredictStrategy()
 
     @property
@@ -58,6 +59,7 @@ class TemplatePredictStrategy(PredictStrategy):
         return BasicResolution()
 
     def predict(self, chroma: np.ndarray, filter_func=lambda d: d) -> tuple:
+        log(self.__class__, "Predicting...")
         _chord_prg = list()
         _ch_v = np.array(list(map(lambda c: c.vector, TemplateChords.ALL)))
 
@@ -70,8 +72,9 @@ class TemplatePredictStrategy(PredictStrategy):
 
 class HarmonicPredictStrategy(PredictStrategy):
 
-    @staticmethod
-    def factory(ctx: Context, **kwargs):
+    @classmethod
+    def factory(cls, config, *args, **kwargs):
+        log(cls, "Init")
         return HarmonicPredictStrategy()
 
     @property
@@ -79,6 +82,7 @@ class HarmonicPredictStrategy(PredictStrategy):
         return BasicResolution()
 
     def predict(self, chroma: np.ndarray, filter_func=lambda d: d) -> tuple:
+        log(self.__class__, "Predicting...")
         _chord_prg = list()
         _ch_v = np.array(list(map(lambda c: c.vector, HarmonicChords.ALL)))
 

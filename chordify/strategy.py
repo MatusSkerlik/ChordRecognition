@@ -31,7 +31,7 @@ from abc import ABC, abstractmethod
 
 class Strategy(ABC):
 
-    @staticmethod
+    @classmethod
     @abstractmethod
-    def factory(*args, **kwargs):
+    def factory(cls, *args, **kwargs):
         pass

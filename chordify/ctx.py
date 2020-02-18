@@ -27,9 +27,11 @@
 #
 #
 from collections import ChainMap
-from enum import Enum
 from functools import partial
 
+from chordify.config import ImmutableDict
+from chordify.logger import log
+from chordify.state import AppState
 from .exceptions import IllegalStateError
 
 _ctx_err_msg = """\
@@ -96,6 +98,8 @@ class Stack(object):
         stack = getattr(self._storage, "stack", None)
         if stack is None:
             return None
+        elif len(stack) == 1:
+            return stack[-1]
         else:
             return stack.pop()
 
@@ -126,19 +130,34 @@ class ContextAttribute(object):
         return rv
 
 
-class State(Enum):
-    UNINITIALIZED = 0
-    LEARNING = 1
-    PREDICTING = 2
+class ConfigAttribute(object):
+    """Makes an attribute forward to the config"""
+
+    def __init__(self, name, get_converter=None):
+        self.__name__ = name
+        self.get_converter = get_converter
+
+    def __get__(self, obj, type=None):
+        if obj is None:
+            return self
+        rv = _ctx_stack.top.config[self.__name__]
+        if self.get_converter is not None:
+            rv = self.get_converter(rv)
+        return rv
 
 
 class Context(object):
     def __init__(self, app, client_config=None) -> None:
+        log(self.__class__, "Init")
         super().__init__()
 
         self.app = app
-        self.state = State.UNINITIALIZED
-        self.config = ChainMap(client_config or {}, app.default_config)
+        self.state = AppState.UNINITIALIZED
+
+        if _ctx_stack.top is not None:
+            self.config = ImmutableDict(ChainMap(client_config or {}, _ctx_stack.top.config or {}, app.default_config))
+        else:
+            self.config = ImmutableDict(ChainMap(client_config or {}, app.default_config))
 
         self.audio_processing = None
         self.chord_recognition = None
@@ -148,29 +167,33 @@ class Context(object):
         return self.__getattribute__(item)
 
     def __enter__(self):
-        self.push(State.PREDICTING)
+        self.push(AppState.PREDICTING)
         return self.app
 
     def __exit__(self, exc_type, exc_value, tb):
         self.pop()
 
-    def push(self, state: State):
-        del self.chord_recognition
+    def push(self, state: AppState):
 
-        if state == State.UNINITIALIZED:
+        if state == AppState.UNINITIALIZED:
             raise IllegalStateError
 
-        self.state = state
-        _ctx_stack.push(self)
+        if state != self.state:
+            del self.chord_recognition
+            self.state = state
+            _ctx_stack.push(self)
 
-        self.audio_processing = self.config["AUDIO_PROCESSING_CLASS"].factory(self)
-        if state == State.PREDICTING:
-            self.chord_recognition = self.config["CHORD_RECOGNITION_CLASS"].factory(self)
-        else:
-            self.chord_recognition = self.config["CHORD_LEARNING_CLASS"].factory(self)
-        self.plotter = self.config["PLOT_CLASS"].factory(self)
+            self.audio_processing = self.config["AUDIO_PROCESSING_CLASS"].factory(self.config, self.state)
+            if state == AppState.PREDICTING:
+                self.chord_recognition = self.config["CHORD_RECOGNITION_CLASS"].factory(self.config, self.state)
+            else:
+                self.chord_recognition = self.config["CHORD_LEARNING_CLASS"].factory(self.config, self.state)
+            self.plotter = self.config["PLOT_CLASS"].factory(self.config, self.state)
+
+            log(self.__class__, "Context pushed")
 
     def pop(self):
+        log(self.__class__, "Context popped")
         _ctx_stack.pop()
 
 

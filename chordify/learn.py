@@ -28,9 +28,10 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.preprocessing import LabelEncoder
 
 from .chord_recognition import PredictStrategy
-from .ctx import _ctx_state, State
 from .exceptions import IllegalArgumentError, IllegalStateError
+from .logger import log
 from .music import Vector, IChord, Resolution, StrictResolution
+from .state import AppState
 
 
 class RGridSearchCV(GridSearchCV):
@@ -107,8 +108,8 @@ class LearnStrategy(PredictStrategy):
 
 
 class ScikitLearnStrategy(LearnStrategy):
-    ch_resolution: StrictResolution
 
+    ch_resolution: StrictResolution
     classifier: RGridSearchCV
     __unpickling__ = False  # HACK
 
@@ -136,21 +137,26 @@ class ScikitLearnStrategy(LearnStrategy):
         return self.ch_resolution
 
     def learn(self, supervised_vectors: SupervisedVectors):
+        log(self.__class__, "Learning...")
         self.ch_resolution = StrictResolution(supervised_vectors.labels())
         self.classifier.fit(supervised_vectors.vectors(), supervised_vectors.labels())
+        log(self.__class__, "Learning done...")
 
         with Path(self.__class__.__name__ + ".pickle").open(mode='wb') as fd:
+            log(self.__class__, "Dumping model = " + str(fd))
             dump(self, fd)
 
     def predict(self, vectors: np.ndarray) -> Tuple[IChord]:
+        log(self.__class__, "Predicting...")
         return self.classifier.r_predict(vectors.T, self.ch_resolution)
 
 
 class SVCLearn(ScikitLearnStrategy):
 
-    @staticmethod
-    def factory(*args, **kwargs):
-        if _ctx_state() == State.LEARNING:
+    @classmethod
+    def factory(cls, config, state, *args, **kwargs):
+        log(cls, "Init")
+        if state == AppState.LEARNING:
             return SVCLearn.__new__(SVCLearn, svm.SVC(), C=[1, 50])
         else:
             return SVCLearn.__new__(SVCLearn)

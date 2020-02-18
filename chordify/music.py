@@ -287,7 +287,7 @@ class StrictResolution(Resolution):
     def __init__(self, chords: Sequence[IChord]) -> None:
         super().__init__()
 
-        self._chords = set(chords)
+        self._chords = set(sorted(chords))
 
     def __iter__(self):
         return iter(self._chords)

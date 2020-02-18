@@ -36,7 +36,8 @@ import numpy as np
 from matplotlib.axes import Axes
 
 from .annotation import ChordTimeline
-from .ctx import Context, _chord_resolution
+from .ctx import _chord_resolution
+from .logger import log
 from .music import BasicResolution, IChord
 from .utils import score
 
@@ -49,13 +50,14 @@ class Plotter(object):
     _default_width: int = 6
     _default_height: int = 8
 
-    @staticmethod
-    def factory(ctx: Context):
+    @classmethod
+    def factory(cls, config, *args, **kwargs):
+        log(cls, "Init")
         return Plotter(
-            ctx.config["CHARTS_ROWS"],
-            ctx.config["CHARTS_COLS"],
-            ctx.config["CHARTS_WIDTH"],
-            ctx.config["CHARTS_HEIGHT"]
+            config["CHARTS_ROWS"],
+            config["CHARTS_COLS"],
+            config["CHARTS_WIDTH"],
+            config["CHARTS_HEIGHT"]
         )
 
     def __init__(self, n_rows: int = None, n_cols: int = None, width: int = None, height: int = None) -> None:
