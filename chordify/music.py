@@ -30,8 +30,9 @@ from abc import abstractmethod, ABCMeta, ABC
 from collections import deque
 from enum import Enum
 from functools import cached_property
-from itertools import cycle, product
+from itertools import cycle, product, accumulate
 from math import log
+from operator import mul
 from typing import Tuple, List, Iterable, Collection, Sized, Sequence, Union
 
 import numpy as np
@@ -53,7 +54,7 @@ def _frequency(pitch: int) -> float:
     return pow(2, (pitch - 69) / 12) * 440
 
 
-def _harmonics(start: 'ChordKey', length=19) -> Tuple['ChordKey']:
+def _harmonics(start: 'ChordKey', length=8) -> Tuple['ChordKey']:
     fq = list(reversed(tuple(i * start.frequency() for i in range(1, length + 1))))
 
     chk_seq: List['ChordKey'] = list()
@@ -62,7 +63,8 @@ def _harmonics(start: 'ChordKey', length=19) -> Tuple['ChordKey']:
         subject = fq.pop()
 
         before: ChordKey = start
-        for i, k in zip(range(12 * (int(log(length, 2)) + 1)), cycle(ChordKey.__iter__())):
+        for i, k in zip(range(12 * (int(log(length, 2)) + 1)),
+                        cycle(k for k in ChordKey.__iter__() if k != ChordKey.N)):
             if _frequency(i) < subject:
                 before = k
             else:
@@ -270,7 +272,16 @@ class HarmonicChord(TemplateChord):
 
     @cached_property
     def vector(self) -> Vector:
-        return super().vector + _harm_to_vector(_harmonics(self.key))
+
+        _result = ZeroVector()
+        for i, key in enumerate(super().vector):
+            if key:
+                _harm = _harmonics(tuple(ChordKey.__iter__())[i])
+                for _i, _key in enumerate(k for k in ChordKey.__iter__() if k != ChordKey.N):
+                    _count = _harm.count(_key)
+                    _result[_i] += sum(accumulate([.0125 for u in range(_count)], mul))
+
+        return _result + super().vector
 
 
 class Resolution(ABC):
