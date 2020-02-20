@@ -43,6 +43,10 @@ from .utils import score
 
 
 class Plotter(object):
+    _u_cols: int
+    _u_rows: int
+    _u_width: int
+    _u_height: int
     _n_cols: int
     _n_rows: int
     _auto: bool
@@ -62,13 +66,21 @@ class Plotter(object):
 
     def __init__(self, n_rows: int = None, n_cols: int = None, width: int = None, height: int = None) -> None:
 
-        self._n_func = list()
-        self.height = height or self._default_width
-        self.width = width or self._default_width
+        self._u_rows = n_rows
+        self._u_cols = n_cols
+        self._u_width = width
+        self._u_height = height
 
-        if n_rows is not None and n_cols is not None and n_rows > 0 and n_cols > 0:
-            self._n_rows = n_rows
-            self._n_cols = n_cols
+        self._reset()
+
+    def _reset(self):
+        self._n_func = list()
+        self.height = self._u_width or self._default_width
+        self.width = self._u_height or self._default_width
+
+        if self._u_rows is not None and self._u_cols is not None and self._u_rows > 0 and self._u_cols > 0:
+            self._n_rows = self._u_rows
+            self._n_cols = self._u_cols
             self._auto = False
         else:
             self._n_rows = 0
@@ -153,3 +165,4 @@ class Plotter(object):
                     n_cols += 1
                 n_rows += 1
         fig.show()
+        self._reset()

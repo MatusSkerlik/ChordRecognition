@@ -28,6 +28,8 @@
 #
 from typing import Iterator, Union
 
+from joblib import Parallel, delayed
+
 from chordify.exceptions import IllegalConfigError
 from .annotation import parse_annotation, make_timeline
 from .audio_processing import *
@@ -35,7 +37,7 @@ from .chord_recognition import *
 from .config import Config, ImmutableDict
 from .ctx import Context, _ctx_stack, ContextAttribute, ConfigAttribute
 from .display import Plotter
-from .learn import SupervisedVectors, SVCLearn, LearnStrategy
+from .learn import SupervisedVectors, SVCLearn
 from .music import Vector
 from .state import AppState
 
@@ -53,9 +55,9 @@ def check_config(config):
     if "AP_BEAT_STRATEGY_CLASS" in config and not issubclass(config["AP_BEAT_STRATEGY_CLASS"], BeatStrategy):
         raise IllegalConfigError
     if "CHORD_RECOGNITION_CLASS" in config and not issubclass(config["CHORD_RECOGNITION_CLASS"],
-                                                              PredictStrategy):
+                                                              Strategy):
         raise IllegalConfigError
-    if "CHORD_LEARNING_CLASS" in config and not issubclass(config["CHORD_LEARNING_CLASS"], LearnStrategy):
+    if "CHORD_LEARNING_CLASS" in config and not issubclass(config["CHORD_LEARNING_CLASS"], Strategy):
         raise IllegalConfigError
 
 
@@ -104,7 +106,7 @@ class Chordify(object):
         if _ctx_stack.top is not None:
             return _ctx_stack.top
         else:
-            return self.with_config()
+            return self.with_config(config)
 
     def with_config(self, config=None):
         if config is None:
@@ -116,7 +118,8 @@ class Chordify(object):
         log(self.__class__, "Start predicting")
         ctx = self.app_context()
         try:
-            ctx.push(AppState.PREDICTING)
+            ctx.push()
+            ctx.transition_to(AppState.PREDICTING)
 
             _absolute_path = Path(absolute_path) if isinstance(absolute_path, str) else absolute_path
             _annotation_path = Path(annotation_path) if isinstance(annotation_path, str) else annotation_path
@@ -146,20 +149,21 @@ class Chordify(object):
     def from_samples(self, paths: Iterator[Path] = None, labels: Iterator[IChord] = None,
                      iterable: Iterator = None):
         log(self.__class__, "Start learning")
-        ctx = self.with_config({
-            "AP_BEAT_STRATEGY_CLASS": VectorBeatStrategy,
-        })
+        ctx = self.with_config({"AP_BEAT_STRATEGY_CLASS": VectorBeatStrategy})
         try:
-            ctx.push(AppState.LEARNING)
+            ctx.push()
+            ctx.transition_to(AppState.LEARNING)
 
             if iterable is None and (paths is None or labels is None):
                 raise IllegalArgumentError
 
+            _iter = tuple(zip(paths, labels) if iterable is None else iterable)
             _supervised_vectors = SupervisedVectors()
 
-            for absolute_path, label in (zip(paths, labels) if iterable is None else iterable):
-                vector, e = self.audio_processing.process(absolute_path)
-                _supervised_vectors.append(Vector(vector), label)
+            with Parallel(n_jobs=-3) as parallel:
+                out = parallel(delayed(self.audio_processing.process)(path) for path, label in _iter)
+                for vector_beat, path_label in zip(out, _iter):
+                    _supervised_vectors.append(Vector(vector_beat[0]), path_label[1])
 
             self.chord_learner.learn(_supervised_vectors)
         finally:

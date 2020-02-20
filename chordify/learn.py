@@ -18,36 +18,40 @@
 #
 from abc import abstractmethod
 from collections import Sized, Iterator
-from pathlib import Path
 from pickle import dump, load
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, ContextManager
 
 import numpy as np
 from sklearn import svm
+from sklearn.base import BaseEstimator
 from sklearn.model_selection import GridSearchCV
 from sklearn.preprocessing import LabelEncoder
 
+from chordify.strategy import Strategy
 from .chord_recognition import PredictStrategy
-from .exceptions import IllegalArgumentError, IllegalStateError
+from .exceptions import IllegalArgumentError
 from .logger import log
 from .music import Vector, IChord, Resolution, StrictResolution
 from .state import AppState
 
 
 class RGridSearchCV(GridSearchCV):
+    _encoder: LabelEncoder
+
+    def __init__(self, estimator, param_grid, scoring=None, n_jobs=None, iid='deprecated', refit=True, cv=None,
+                 verbose=0, pre_dispatch='2*n_jobs', error_score=np.nan, return_train_score=False):
+        super().__init__(estimator, param_grid, scoring, n_jobs, iid, refit, cv, verbose, pre_dispatch, error_score,
+                         return_train_score)
+        self._encoder = LabelEncoder()
 
     def fit(self, x: Tuple[Vector], y: Tuple[IChord] = None, groups=None, **fit_params):
-        _y = LabelEncoder().fit_transform(tuple(map(str, y)))
-        _x = np.array(x)
-
-        return super().fit(x, _y, groups, **fit_params)
+        _y = self._encoder.fit_transform(tuple(map(str, y)))
+        return super().fit(np.array(x), _y, groups, **fit_params)
 
     def r_predict(self, vectors: np.ndarray, chord_resolution: Resolution) -> Tuple[IChord]:
         _l_ch_map: Dict[str, IChord] = {str(r): r for r in chord_resolution}
-        y = self.predict(vectors)
-        encoder = LabelEncoder().fit(tuple(map(str, chord_resolution)))
-
-        return tuple(map(lambda l: _l_ch_map[l], encoder.inverse_transform(y)))
+        _y = self.predict(vectors)
+        return tuple(map(lambda l: _l_ch_map[l], self._encoder.inverse_transform(_y)))
 
 
 class SupervisedVectors(Sized, Iterator):
@@ -111,26 +115,10 @@ class ScikitLearnStrategy(LearnStrategy):
 
     ch_resolution: StrictResolution
     classifier: RGridSearchCV
-    __unpickling__ = False  # HACK
 
-    def __new__(cls, *args, **kwargs) -> Any:
-        if not args and not kwargs and not cls.__unpickling__:
-            try:
-                cls.__unpickling__ = True
-                with Path(cls.__name__ + ".pickle").open(mode='rb') as fd:
-                    return load(fd)
-            except FileNotFoundError:
-                raise IllegalStateError("Model not trained, train first !")
-        elif cls.__unpickling__:
-            cls.__unpickling__ = False
-            return object.__new__(cls)
-        else:
-            o = object.__new__(cls)
-            o.__init__(*args, **kwargs)
-            return o
-
-    def __init__(self, core, **kwargs) -> None:
-        self.classifier = RGridSearchCV(core, kwargs, cv=5, n_jobs=-1)
+    def __init__(self, estimator: BaseEstimator, file: ContextManager, **kwargs) -> None:
+        self.classifier = RGridSearchCV(estimator, kwargs, cv=5, n_jobs=-1)
+        self.output_file = file
 
     @property
     def resolution(self) -> Resolution:
@@ -142,21 +130,29 @@ class ScikitLearnStrategy(LearnStrategy):
         self.classifier.fit(supervised_vectors.vectors(), supervised_vectors.labels())
         log(self.__class__, "Learning done...")
 
-        with Path(self.__class__.__name__ + ".pickle").open(mode='wb') as fd:
-            log(self.__class__, "Dumping model = " + str(fd))
-            dump(self, fd)
+        output_file = self.output_file
+        del self.output_file
+
+        with output_file as f:
+            log(self.__class__, "Dumping model = " + str(f))
+            dump(self, f)
 
     def predict(self, vectors: np.ndarray) -> Tuple[IChord]:
         log(self.__class__, "Predicting...")
         return self.classifier.r_predict(vectors.T, self.ch_resolution)
 
 
-class SVCLearn(ScikitLearnStrategy):
+class SVCLearn(Strategy):
+
+    def __new__(cls, estimator: BaseEstimator, state: AppState, file: ContextManager, *args,
+                **kwargs) -> ScikitLearnStrategy:
+        if state == AppState.LEARNING:
+            return ScikitLearnStrategy(estimator, file, **kwargs)
+        else:
+            with file as f:
+                return load(f)
 
     @classmethod
-    def factory(cls, config, state, *args, **kwargs):
+    def factory(cls, config: dict, state: AppState, file: ContextManager, *args, **kwargs) -> ScikitLearnStrategy:
         log(cls, "Init")
-        if state == AppState.LEARNING:
-            return SVCLearn.__new__(SVCLearn, svm.SVC(), C=[1, 50])
-        else:
-            return SVCLearn.__new__(SVCLearn)
+        return SVCLearn(svm.SVC(), state, file, C=[1, 50])

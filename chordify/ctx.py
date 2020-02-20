@@ -27,12 +27,13 @@
 #
 #
 from collections import ChainMap
+from contextlib import contextmanager
 from functools import partial
 
 from chordify.config import ImmutableDict
 from chordify.logger import log
 from chordify.state import AppState
-from .exceptions import IllegalStateError
+from .exceptions import IllegalStateError, IllegalArgumentError
 
 _ctx_err_msg = """\
 Working outside of application context.
@@ -44,11 +45,29 @@ documentation for more information.\
 """
 
 
-def _lookup_app_object(name):
+def ctx_state(mode):
+    def wrap(func):
+        def wrapped(*args, **kwargs):
+            if _ctx_state() & mode:
+                return func(*args, **kwargs)
+            else:
+                raise IllegalStateError("No context state information !")
+
+        return wrapped
+
+    return wrap
+
+
+def _lookup_app_stateless(name):
     top = _ctx_stack.top
     if top is None:
         raise RuntimeError(_ctx_err_msg)
     return getattr(top, name)
+
+
+@ctx_state(AppState.PREDICTING | AppState.LEARNING)
+def _lookup_app(name):
+    return _lookup_app_stateless(name)
 
 
 class Storage(object):
@@ -162,43 +181,73 @@ class Context(object):
         self.audio_processing = None
         self.chord_recognition = None
         self.plotter = None
+        self.handled_by_manager = False
 
     def __getitem__(self, item):
         return self.__getattribute__(item)
 
     def __enter__(self):
-        self.push(AppState.PREDICTING)
+        self.push()
+        self.handled_by_manager = True
         return self.app
 
     def __exit__(self, exc_type, exc_value, tb):
+        self.handled_by_manager = False
         self.pop()
 
-    def push(self, state: AppState):
+    @contextmanager
+    def provide_file(self, full_path: str, mode='rb'):
+        log(self.__class__, "Opening file = " + str(full_path))
+        file = open(full_path, mode)
+        try:
+            yield file
+        finally:
+            log(self.__class__, "Closing file = " + str(full_path))
+            file.close()
 
+    def transition_to(self, state: AppState):
         if state == AppState.UNINITIALIZED:
-            raise IllegalStateError
+            raise IllegalArgumentError
 
-        if state != self.state:
-            del self.chord_recognition
+        if self.state != state:
             self.state = state
-            _ctx_stack.push(self)
-
-            self.audio_processing = self.config["AUDIO_PROCESSING_CLASS"].factory(self.config, self.state)
             if state == AppState.PREDICTING:
-                self.chord_recognition = self.config["CHORD_RECOGNITION_CLASS"].factory(self.config, self.state)
+                self.audio_processing = self.config["AUDIO_PROCESSING_CLASS"].factory(self.config, self.state)
+                self.chord_recognition = self.config["CHORD_RECOGNITION_CLASS"].factory(
+                    self.config,
+                    self.state,
+                    self.provide_file("model.pickle", "rb")
+                )
+                self.plotter = self.config["PLOT_CLASS"].factory(self.config, self.state)
+            elif state == AppState.LEARNING:
+                self.audio_processing = self.config["AUDIO_PROCESSING_CLASS"].factory(self.config, self.state)
+                self.chord_recognition = self.config["CHORD_LEARNING_CLASS"].factory(
+                    self.config,
+                    self.state,
+                    self.provide_file("model.pickle", "wb")
+                )
+                self.plotter = self.config["PLOT_CLASS"].factory(self.config, self.state)
             else:
-                self.chord_recognition = self.config["CHORD_LEARNING_CLASS"].factory(self.config, self.state)
-            self.plotter = self.config["PLOT_CLASS"].factory(self.config, self.state)
+                raise IllegalArgumentError
 
-            log(self.__class__, "Context pushed")
+    def push(self):
+        if not self.handled_by_manager and self.state == AppState.UNINITIALIZED:
+            if _ctx_stack.top != self:
+                _ctx_stack.push(self)
+                log(self.__class__, "Context pushed")
+        else:
+            pass
 
     def pop(self):
-        log(self.__class__, "Context popped")
-        _ctx_stack.pop()
+        if not self.handled_by_manager and _ctx_stack.top == self:
+            log(self.__class__, "Context popped")
+            _ctx_stack.pop()
+        else:
+            pass
 
 
 _ctx_stack = Stack()
-_ctx_state = partial(_lookup_app_object, "state")
-_chord_processing = partial(_lookup_app_object, "chord_processing")
-_chord_recognition = partial(_lookup_app_object, "chord_recognition")
+_ctx_state = partial(_lookup_app_stateless, "state")
+_chord_processing = partial(_lookup_app, "chord_processing")
+_chord_recognition = partial(_lookup_app, "chord_recognition")
 _chord_resolution = partial(lambda t: object.__getattribute__(_chord_recognition(), t), "resolution")

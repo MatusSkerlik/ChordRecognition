@@ -32,3 +32,23 @@ class AppState(Enum):
     UNINITIALIZED = 0
     LEARNING = 1
     PREDICTING = 2
+
+    def __or__(self, other):
+        if isinstance(other, AppState):
+            return self.value | other.value
+        elif isinstance(other, int):
+            return self.value | other
+        raise NotImplementedError
+
+    def __and__(self, other):
+        if isinstance(other, AppState):
+            return self.value & other.value
+        elif isinstance(other, int):
+            return self.value & other
+        raise NotImplementedError
+
+    def __ror__(self, other):
+        return self.value | other
+
+    def __rand__(self, other):
+        return self.value & other
