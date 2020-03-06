@@ -30,12 +30,10 @@ from abc import abstractmethod, ABCMeta, ABC
 from collections import deque
 from enum import Enum
 from functools import cached_property
-from itertools import cycle, product, accumulate
+from itertools import cycle, product, accumulate, chain
 from math import log
 from operator import mul
 from typing import Tuple, List, Iterable, Collection, Sized, Sequence, Union
-
-import numpy as np
 
 from .exceptions import IllegalStateError, IllegalArgumentError
 
@@ -226,6 +224,15 @@ class IChord(object):
 
 class Chord(IChord, metaclass=ABCMeta):
 
+    def __len__(self):
+        return 12
+
+    def __iter__(self):
+        return iter(self.vector)
+
+    def __getitem__(self, item):
+        return self.vector[item]
+
     @property
     def key(self):
         return self._chord_key
@@ -318,7 +325,7 @@ class TemplateChords(object):
     MINOR = tuple(TemplateChord(key, ChordType.MINOR) for key in ChordKey if key != ChordKey.N)
     AUGMENTED = tuple(TemplateChord(key, ChordType.AUGMENTED) for key in ChordKey if key != ChordKey.N)
     DIMINISHED = tuple(TemplateChord(key, ChordType.DIMINISHED) for key in ChordKey if key != ChordKey.N)
-    ALL = tuple(np.array([MAJOR, MINOR, AUGMENTED, DIMINISHED]).flatten())
+    ALL = tuple(chain(MAJOR, MINOR, AUGMENTED, DIMINISHED))
 
 
 class HarmonicChords(object):
@@ -326,4 +333,4 @@ class HarmonicChords(object):
     MINOR = tuple(HarmonicChord(key, ChordType.MINOR) for key in ChordKey if key != ChordKey.N)
     AUGMENTED = tuple(HarmonicChord(key, ChordType.AUGMENTED) for key in ChordKey if key != ChordKey.N)
     DIMINISHED = tuple(HarmonicChord(key, ChordType.DIMINISHED) for key in ChordKey if key != ChordKey.N)
-    ALL = tuple(np.array([MAJOR, MINOR, AUGMENTED, DIMINISHED]).flatten())
+    ALL = tuple(chain(MAJOR, MINOR, AUGMENTED, DIMINISHED))

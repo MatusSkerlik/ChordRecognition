@@ -46,21 +46,21 @@ class LoadStrategy(Strategy, ABC):
         pass
 
 
-class STFTStrategy(Strategy, ABC):
+class ExtractionStrategy(Strategy, ABC):
 
     @abstractmethod
     def run(self, y: np.ndarray) -> np.ndarray:
         pass
 
 
-class ChromaStrategy(Strategy, ABC):
+class FrameStrategy(Strategy, ABC):
 
     @abstractmethod
     def run(self, c: np.ndarray) -> np.ndarray:
         pass
 
 
-class BeatStrategy(Strategy, ABC):
+class SegmentationStrategy(Strategy, ABC):
 
     @abstractmethod
     def run(self, y: np.ndarray, chroma: np.ndarray) -> (np.ndarray, Any):
@@ -86,7 +86,7 @@ class PathLoadStrategy(LoadStrategy):
         return y_harm
 
 
-class CQTStrategy(STFTStrategy):
+class CQTStrategy(ExtractionStrategy):
 
     @classmethod
     def factory(cls, config, *args, **kwargs):
@@ -117,12 +117,12 @@ class CQTStrategy(STFTStrategy):
                       )
 
 
-class FilteringChromaStrategy(ChromaStrategy):
+class SmoothingFrameStrategy(FrameStrategy):
 
     @classmethod
     def factory(cls, config, *args, **kwargs):
         log(cls, "Init")
-        return FilteringChromaStrategy(
+        return SmoothingFrameStrategy(
             config["HOP_LENGTH"],
             config["MIN_FREQ"],
             config["BINS_PER_OCTAVE"],
@@ -151,12 +151,12 @@ class FilteringChromaStrategy(ChromaStrategy):
                                                       metric='cosine'))
 
 
-class HPSSChromaStrategy(ChromaStrategy):
+class HPSSFrameStrategy(FrameStrategy):
 
     @classmethod
     def factory(cls, config, *args, **kwargs):
         log(cls, "Init")
-        return HPSSChromaStrategy(
+        return HPSSFrameStrategy(
             config["HOP_LENGTH"],
             config["MIN_FREQ"],
             config["BINS_PER_OCTAVE"],
@@ -188,12 +188,12 @@ class HPSSChromaStrategy(ChromaStrategy):
         return chroma
 
 
-class SyncBeatStrategy(BeatStrategy):
+class BeatSegmentationStrategy(SegmentationStrategy):
 
     @classmethod
     def factory(cls, config, *args, **kwargs):
         log(cls, "Init")
-        return SyncBeatStrategy(
+        return BeatSegmentationStrategy(
             config["SAMPLING_FREQUENCY"],
             config["HOP_LENGTH"]
         )
@@ -212,23 +212,23 @@ class SyncBeatStrategy(BeatStrategy):
         return frames, beat_t
 
 
-class NoBeatStrategy(BeatStrategy):
+class NoSegmentationStrategy(SegmentationStrategy):
 
     @classmethod
     def factory(cls, config, *args, **kwargs):
         log(cls, "Init")
-        return NoBeatStrategy()
+        return NoSegmentationStrategy()
 
     def run(self, y: np.ndarray, chroma: np.ndarray) -> (np.ndarray, None):
         return y, None
 
 
-class VectorBeatStrategy(BeatStrategy):
+class OneVectorSegmentationStrategy(SegmentationStrategy):
 
     @classmethod
     def factory(cls, config):
         log(cls, "Init")
-        return VectorBeatStrategy()
+        return OneVectorSegmentationStrategy()
 
     def __init__(self) -> None:
         super().__init__()
@@ -236,6 +236,17 @@ class VectorBeatStrategy(BeatStrategy):
     def run(self, y: np.ndarray, chroma: np.ndarray) -> (np.ndarray, None):
         vector = librosa.util.sync(chroma, [0], aggregate=np.median)
         return vector.flatten(), None
+
+
+class HCDFSegmentationStrategy(SegmentationStrategy):
+
+    @classmethod
+    def factory(cls, config, *args, **kwargs):
+        log(cls, "Init")
+        return HCDFSegmentationStrategy()
+
+    def run(self, y: np.ndarray, chroma: np.ndarray) -> (np.ndarray, None):
+        pass  # TODO
 
 
 class AudioProcessing(Strategy):
@@ -250,8 +261,8 @@ class AudioProcessing(Strategy):
             config["AP_BEAT_STRATEGY_CLASS"].factory(config)
         )
 
-    def __init__(self, load_strategy: LoadStrategy, stft_strategy: STFTStrategy, chroma_strategy: ChromaStrategy,
-                 beat_strategy: BeatStrategy) -> None:
+    def __init__(self, load_strategy: LoadStrategy, stft_strategy: ExtractionStrategy, chroma_strategy: FrameStrategy,
+                 beat_strategy: SegmentationStrategy) -> None:
         super().__init__()
 
         if load_strategy is None:
@@ -274,4 +285,3 @@ class AudioProcessing(Strategy):
         c = self.stft_strategy.run(y)
         chroma = self.chroma_strategy.run(c)
         return self.beat_strategy.run(y, chroma)
-

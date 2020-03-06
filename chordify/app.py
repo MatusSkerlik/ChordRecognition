@@ -47,12 +47,12 @@ def check_config(config):
         raise IllegalConfigError
     if "AP_LOAD_STRATEGY_CLASS" in config and not issubclass(config["AP_LOAD_STRATEGY_CLASS"], LoadStrategy):
         raise IllegalConfigError
-    if "AP_STFT_STRATEGY_CLASS" in config and not issubclass(config["AP_STFT_STRATEGY_CLASS"], STFTStrategy):
+    if "AP_STFT_STRATEGY_CLASS" in config and not issubclass(config["AP_STFT_STRATEGY_CLASS"], ExtractionStrategy):
         raise IllegalConfigError
     if "AP_CHROMA_STRATEGY_CLASS" in config and not issubclass(config["AP_CHROMA_STRATEGY_CLASS"],
-                                                               ChromaStrategy):
+                                                               FrameStrategy):
         raise IllegalConfigError
-    if "AP_BEAT_STRATEGY_CLASS" in config and not issubclass(config["AP_BEAT_STRATEGY_CLASS"], BeatStrategy):
+    if "AP_BEAT_STRATEGY_CLASS" in config and not issubclass(config["AP_BEAT_STRATEGY_CLASS"], SegmentationStrategy):
         raise IllegalConfigError
     if "CHORD_RECOGNITION_CLASS" in config and not issubclass(config["CHORD_RECOGNITION_CLASS"],
                                                               Strategy):
@@ -77,8 +77,8 @@ class Chordify(object):
         "AUDIO_PROCESSING_CLASS": AudioProcessing,
         "AP_LOAD_STRATEGY_CLASS": PathLoadStrategy,
         "AP_STFT_STRATEGY_CLASS": CQTStrategy,
-        "AP_CHROMA_STRATEGY_CLASS": FilteringChromaStrategy,
-        "AP_BEAT_STRATEGY_CLASS": SyncBeatStrategy,
+        "AP_CHROMA_STRATEGY_CLASS": SmoothingFrameStrategy,
+        "AP_BEAT_STRATEGY_CLASS": BeatSegmentationStrategy,
 
         "SAMPLING_FREQUENCY": 44100,
         "N_OCTAVES": 84 // 12,
@@ -149,7 +149,7 @@ class Chordify(object):
     def from_samples(self, paths: Iterator[Path] = None, labels: Iterator[IChord] = None,
                      iterable: Iterator = None):
         log(self.__class__, "Start learning")
-        ctx = self.with_config({"AP_BEAT_STRATEGY_CLASS": VectorBeatStrategy})
+        ctx = self.with_config({"AP_BEAT_STRATEGY_CLASS": OneVectorSegmentationStrategy})
         try:
             ctx.push()
             ctx.transition_to(AppState.LEARNING)
