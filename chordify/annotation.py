@@ -16,6 +16,16 @@
 #  OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 #  OTHER DEALINGS IN THE SOFTWARE.
 #
+
+#
+#  Permission is hereby granted, free of charge, to any person obtaining a copy of this
+#  software and associated documentation files (the "Software"), to deal in the Software
+#  without restriction, including without limitation the rights to use, copy, modify, merge,
+#  publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+#  to whom the Software is furnished to do so, subject to the following conditions:
+#
+#
+#
 #
 #  Permission is hereby granted, free of charge, to any person obtaining a copy of this
 #  software and associated documentation files (the "Software"), to deal in the Software
@@ -32,7 +42,7 @@ from typing import Tuple, List, Sequence
 from pandas import read_csv
 
 from .ctx import _chord_resolution
-from .exceptions import AnnotationParsingError
+from .exceptions import IllegalArgumentError
 from .music import IChord, ChordKey
 from .strategy import Strategy
 
@@ -69,8 +79,12 @@ class ChordTimeline(Sequence):
 
     def append(self, start: float, stop: float, chord: IChord):
         if start is None or stop is None or start < 0 or stop <= 0 or chord is None:
-            raise AnnotationParsingError
+            raise IllegalArgumentError
 
+        if len(self._start) > 0 and max(self._start) > start:
+            raise IllegalArgumentError
+        if len(self._stop) > 0 and max(self._stop) > stop:
+            raise IllegalArgumentError
         self._start.append(float(start))
         self._stop.append(float(stop))
         self._chords.append(chord)

@@ -26,12 +26,22 @@
 #
 #
 #
-from functools import lru_cache
-from itertools import tee
-from math import sin, pi, cos
 
+#
+#  Permission is hereby granted, free of charge, to any person obtaining a copy of this
+#  software and associated documentation files (the "Software"), to deal in the Software
+#  without restriction, including without limitation the rights to use, copy, modify, merge,
+#  publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+#  to whom the Software is furnished to do so, subject to the following conditions:
+#
+#
+#
+from itertools import tee
+
+import librosa
 import numpy as np
 from numpy.linalg import norm
+from scipy.signal import find_peaks
 
 
 def _pairwise(iterable):
@@ -42,27 +52,18 @@ def _pairwise(iterable):
     return zip(a, b)
 
 
-@lru_cache
-def hcdf_matrix(r1: float = 1.0, r2: float = 1.0, r3: float = .5):
-    matrix = np.zeros((6, 12))
-    matrix[0] = tuple((r1 * sin((l * 7 * pi) / 6) for l in range(12)))
-    matrix[1] = tuple((r1 * cos((l * 7 * pi) / 6) for l in range(12)))
-    matrix[2] = tuple((r2 * sin((l * 3 * pi) / 2) for l in range(12)))
-    matrix[3] = tuple((r2 * cos((l * 3 * pi) / 2) for l in range(12)))
-    matrix[4] = tuple((r3 * sin((l * 2 * pi) / 3) for l in range(12)))
-    matrix[5] = tuple((r3 * cos((l * 2 * pi) / 3) for l in range(12)))
-
-    return matrix
-
-
 def hcdf(frames: np.ndarray):
-    """ Harmonic change detect function, #TODO implement M frames solution """
-    matrix = hcdf_matrix()
+    """ Harmonic change detect function """
+    _tonnetz = librosa.feature.tonnetz(chroma=frames)
 
     l2_seq = list()
-    for f0, f1 in _pairwise(frames.T):
-        tv0 = np.dot(matrix, f0) / norm(f0, ord=1)  # manhattan distance
-        tv1 = np.dot(matrix, f1) / norm(f0, ord=1)  # manhattan distance
+    for tv0, tv1 in _pairwise(_tonnetz.T):
         d = norm(tv0 - tv1, ord=2)  # euclidean distance
         l2_seq.append(d)
     return np.array(l2_seq)
+
+
+def get_segments(frames: np.ndarray, prominence=0.5):
+    _hcdf = hcdf(frames)
+    _peaks, _ = find_peaks(_hcdf, prominence=prominence)
+    return np.array_split(frames, _peaks, axis=1), np.append(_peaks, np.size(frames, axis=1))

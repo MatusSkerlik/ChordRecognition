@@ -17,6 +17,16 @@
 #  OTHER DEALINGS IN THE SOFTWARE.
 #
 
+#
+#  Permission is hereby granted, free of charge, to any person obtaining a copy of this
+#  software and associated documentation files (the "Software"), to deal in the Software
+#  without restriction, including without limitation the rights to use, copy, modify, merge,
+#  publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+#  to whom the Software is furnished to do so, subject to the following conditions:
+#
+#
+#
+
 from itertools import chain
 from types import FunctionType
 from typing import Iterable, List
@@ -96,12 +106,12 @@ class Plotter(object):
 
     def chromagram(self, chroma: np.ndarray, beat_time: np.ndarray):
         def plot(ax: Axes):
-            ax.set_title("Chromagram")
             librosa.display.specshow(chroma,
                                      y_axis='chroma',
                                      x_axis='time',
                                      x_coords=beat_time,
                                      ax=ax)
+            ax.set_title("Chromagram")
 
         self._add(plot)
         return self
@@ -118,11 +128,26 @@ class Plotter(object):
             except ValueError:
                 return 0
 
-        def plot(ax: Axes):
-            x_p = list(chain(*((start, stop) for start, stop, chord in predicted)))
-            y_p = list(chain(*((index(chord), index(chord)) for start, stop, chord in predicted)))
-            x_a = list(chain(*((start, stop) for start, stop, chord in annotation)))
-            y_a = list(chain(*((index(chord), index(chord)) for start, stop, chord in annotation)))
+        def plot_prediction(ax: Axes):
+            x = list(chain(*((start, stop) for start, stop, chord in predicted)))
+            y = list(chain(*((index(chord), index(chord)) for start, stop, chord in predicted)))
+
+            ax.set_yticklabels(_ch_str)
+            ax.set_yticks(range(0, len(tuple(BasicResolution())) + 1))
+            ax.set_ylabel('Chords')
+            ax.set_xlim(0, predicted.duration())
+            ax.set_xlabel('Time (s)')
+
+            ax.xaxis.set_major_locator(plt.LinearLocator())
+            ax.xaxis.set_major_formatter(librosa.display.TimeFormatter())
+
+            ax.fill_between(x, y, 'r-', color="darkgrey", linewidth=1)
+            for vl in predicted.stop():
+                ax.axvline(vl, color="green")
+
+        def plot_annotation(ax: Axes):
+            x = list(chain(*((start, stop) for start, stop, chord in annotation)))
+            y = list(chain(*((index(chord), index(chord)) for start, stop, chord in annotation)))
 
             ax.set_yticklabels(_ch_str)
             ax.set_yticks(range(0, len(tuple(BasicResolution())) + 1))
@@ -131,11 +156,18 @@ class Plotter(object):
             ax.set_xlabel('Time (s)')
 
             ax.xaxis.set_major_locator(plt.LinearLocator())
+            ax.xaxis.set_major_formatter(librosa.display.TimeFormatter())
 
-            ax.bar(x_p, y_p, color="darkgrey", linewidth=1, ecolor=None)
-            ax.plot(x_a, y_a, 'r-', linewidth=1)
+            ax.plot(x, y, 'r-', linewidth=1)
+            for vl in annotation.stop():
+                ax.axvline(vl, color="red")
 
             ax.set_title("Chord Prediction " + str(round(score(predicted, annotation), 2)) + "%")
+
+        def plot(ax: Axes):
+            if annotation is not None:
+                plot_annotation(ax)
+            plot_prediction(ax)
 
         self._add(plot)
         return self

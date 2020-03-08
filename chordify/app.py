@@ -26,6 +26,16 @@
 #
 #
 #
+
+#
+#  Permission is hereby granted, free of charge, to any person obtaining a copy of this
+#  software and associated documentation files (the "Software"), to deal in the Software
+#  without restriction, including without limitation the rights to use, copy, modify, merge,
+#  publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+#  to whom the Software is furnished to do so, subject to the following conditions:
+#
+#
+#
 from typing import Iterator, Union
 
 from joblib import Parallel, delayed
@@ -134,8 +144,10 @@ class Chordify(object):
             if self.charts:
                 if self.chart_chromagram:
                     self.plotter.chromagram(chroma_sync, beat_t)
-                if self.chart_prediction and annotation_path is not None:
-                    annotation_timeline = parse_annotation(ctx, _annotation_path)
+                if self.chart_prediction:
+                    annotation_timeline = None
+                    if annotation_path is not None:
+                        annotation_timeline = parse_annotation(ctx, _annotation_path)
                     prediction_timeline = make_timeline(beat_t, prediction)
                     self.plotter.prediction(prediction_timeline, annotation_timeline)
             self.plotter.show()

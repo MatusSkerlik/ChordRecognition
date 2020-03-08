@@ -26,6 +26,16 @@
 #
 #
 #
+
+#
+#  Permission is hereby granted, free of charge, to any person obtaining a copy of this
+#  software and associated documentation files (the "Software"), to deal in the Software
+#  without restriction, including without limitation the rights to use, copy, modify, merge,
+#  publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+#  to whom the Software is furnished to do so, subject to the following conditions:
+#
+#
+#
 from abc import abstractmethod, ABC
 from functools import lru_cache
 from pathlib import Path
@@ -36,6 +46,7 @@ import numpy as np
 
 from chordify.logger import log
 from .exceptions import IllegalArgumentError
+from .hcdf import get_segments
 from .strategy import Strategy
 
 
@@ -243,10 +254,24 @@ class HCDFSegmentationStrategy(SegmentationStrategy):
     @classmethod
     def factory(cls, config, *args, **kwargs):
         log(cls, "Init")
-        return HCDFSegmentationStrategy()
+        return HCDFSegmentationStrategy(
+            config["SAMPLING_FREQUENCY"],
+            config["HOP_LENGTH"]
+        )
+
+    def __init__(self, sampling_frequency: int, hop_length: int) -> None:
+        super().__init__()
+
+        self._hop_length = hop_length
+        self._sr = sampling_frequency
 
     def run(self, y: np.ndarray, chroma: np.ndarray) -> (np.ndarray, None):
-        pass  # TODO
+        _segments, _peaks = get_segments(chroma)
+        _med_segments = list()
+        for vectors in _segments:
+            vector = librosa.util.sync(vectors, [0], aggregate=np.median)
+            _med_segments.append(vector.flatten())
+        return np.array(_med_segments).T, librosa.frames_to_time(_peaks, sr=self._sr, hop_length=self._hop_length)
 
 
 class AudioProcessing(Strategy):
